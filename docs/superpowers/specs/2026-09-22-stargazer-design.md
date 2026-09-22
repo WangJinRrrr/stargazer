@@ -71,7 +71,7 @@ src/
   model/            无任何 Win32 依赖
     rowformat.h/.cpp  行格式序列化/反序列化
     paths.h/.cpp      路径规范化
-    search.h/.cpp     匹配
+    search.h/.cpp     子串匹配 + 自写自然序比较
     todo_model.h/.cpp 排序与状态变更
     store.h/.cpp      四个模块的内存模型
 tests/
@@ -226,7 +226,7 @@ data/ui.txt         key  \t value      （窗口位置尺寸、上次视图、�
 - **状态**：当前路径、历史栈（后退/前进）、项列表、加载中标志、滚动位置、`requestId`。
 - **异步枚举**：线程 B 执行 `FindFirstFileW` / `FindNextFileW`，完成后 `PostMessage(WM_APP_DIR_LOADED, requestId)`；UI 线程比对 `requestId` 丢弃过期结果。
 - **虚拟化**：只渲染可见行（固定行高 28×DPI）。网盘目录可达数千项，不虚拟化会同时压垮枚举、图标提取与渲染。
-- **排序**：`StrCmpLogicalW` 自然序（`1.txt < 2.txt < 10.txt`），目录优先。
+- **排序**：自写自然序比较（约 20 行，位于 `model/search`，无 Win32 依赖因而可测），效果为 `1.txt < 2.txt < 10.txt`，目录优先。使用自写实现而非 `StrCmpLogicalW` 是为了让排序规则落在可测试的 `model/` 内。
 - **刷新策略**：手动 `F5` 为基准；`FindFirstChangeNotification` 注册成功才附加自动刷新——网盘挂载点常不支持，正确性不依赖它。
 - **键盘**：`Enter` 进入/打开，`Backspace` 后退，`Alt+←/→` 前进后退，`F5` 刷新，`Ctrl+C` 复制路径。
 - **路径栏**：常驻 `EDIT`，可直接粘贴路径跳转。
@@ -250,7 +250,7 @@ data/ui.txt         key  \t value      （窗口位置尺寸、上次视图、�
 - `paths` 规范化（大小写、尾斜杠、`..`、重复分隔符、UNC）
 - Box / 分组增删改与引用失效标记
 - Todo 排序规则（优先级 → 创建时间 → 已完成沉底）
-- 搜索匹配与 `StrCmpLogicalW` 自然序比较
+- 搜索匹配与自然序比较（`1.txt < 2.txt < 10.txt`、中文与大小写边界）
 
 不引入测试框架（几行 `assert` 足够）。**UI 层不写自动化测试**，改为每阶段一份手工验收清单。
 
