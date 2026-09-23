@@ -48,6 +48,8 @@ bool app_init(App& app, HINSTANCE inst);
 void app_load(App& app);
 // data_dirty 时落盘并清标志
 void app_save_if_dirty(App& app);
+// 窗口尺寸与当前分组写到 ui.txt（呼出时从它还原）
+void app_save_ui(App& app);
 void app_show(App& app);
 void app_hide(App& app);
 void app_toggle(App& app);

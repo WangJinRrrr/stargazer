@@ -171,6 +171,9 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_SIZE:
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
+        case WM_EXITSIZEMOVE:
+            if (app) app_save_ui(*app);  // 用户拉完窗口就把尺寸记住
+            return 0;
         case WM_ERASEBKGND:
             return 1;  // 全部自绘，禁止系统擦背景以消除闪烁
         case WM_PAINT: {
@@ -428,6 +431,23 @@ static void launch_selected(App& app) {
         return;
     }
     app_hide(app);
+}
+
+void app_save_ui(App& app) {
+    if (!app.panel) return;
+    // 尺寸存逻辑像素：这样换到不同缩放的显示器上尺寸语义不变
+    const float sc = app.render.scale();
+    RECT rc{};
+    ::GetWindowRect(app.panel, &rc);
+    Config ui;
+    config_set(ui, L"w", std::to_wstring(static_cast<int>((rc.right - rc.left) / sc)));
+    config_set(ui, L"h", std::to_wstring(static_cast<int>((rc.bottom - rc.top) / sc)));
+    if (!app.state.groups.empty()) {
+        const int gi = std::clamp(app.state.launcher.group, 0,
+                                  static_cast<int>(app.state.groups.size()) - 1);
+        config_set(ui, L"group", app.state.groups[gi].name);
+    }
+    save_text(app.paths, L"ui.txt", serialize_config(ui));
 }
 
 void app_show(App& app) {

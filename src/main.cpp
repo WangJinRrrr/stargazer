@@ -66,6 +66,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
 
     sg::icons_shutdown();
     sg::app_save_if_dirty(app);
+    sg::app_save_ui(app);
     sg::app_shutdown(app);
     ::CoUninitialize();
     if (once) ::CloseHandle(once);
