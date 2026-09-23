@@ -27,6 +27,22 @@ bool to_bgra_top_down(const BITMAPINFOHEADER& bi, const uint8_t* pixels, size_t 
     if (avail < static_cast<size_t>(src_stride) * h) return false;
 
     stride = w * 4;
+    // 有些程序复制出来的 32bpp DIB 里 alpha 全是 0（它们的本意是“不写 alpha”）。
+    // 照抄就得到一张全透明 PNG（贴出来是白块）→ 全 0 时统一当不透明，
+    // 与 images.cpp 取系统缩略图时的做法一致。
+    bool alpha_all_zero = false;
+    if (bi.biBitCount == 32) {
+        alpha_all_zero = true;
+        for (int y = 0; y < h && alpha_all_zero; ++y) {
+            const uint8_t* s = pixels + static_cast<size_t>(y) * src_stride;
+            for (int x = 0; x < w; ++x) {
+                if (s[x * 4 + 3] != 0) {
+                    alpha_all_zero = false;
+                    break;
+                }
+            }
+        }
+    }
     out.assign(static_cast<size_t>(stride) * h, 0);
     for (int y = 0; y < h; ++y) {
         // 目标第 y 行对应源里的哪一行：自下而上时要翻过来
@@ -37,7 +53,7 @@ bool to_bgra_top_down(const BITMAPINFOHEADER& bi, const uint8_t* pixels, size_t 
             d[x * 4 + 0] = s[x * (bi.biBitCount / 8) + 0];  // B
             d[x * 4 + 1] = s[x * (bi.biBitCount / 8) + 1];  // G
             d[x * 4 + 2] = s[x * (bi.biBitCount / 8) + 2];  // R
-            d[x * 4 + 3] = (bi.biBitCount == 32) ? s[x * 4 + 3] : 255;
+            d[x * 4 + 3] = (bi.biBitCount == 32 && !alpha_all_zero) ? s[x * 4 + 3] : 255;
         }
     }
     return true;

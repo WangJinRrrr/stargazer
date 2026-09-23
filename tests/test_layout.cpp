@@ -96,20 +96,30 @@ static void test_keydown_navigation() {
     CHECK(!sg::grid_keydown(gl, count, sel, scroll, VK_F5));  // 不认识的键不消费
 }
 
-// 待办列表是不等高行（文字 28 / 图片 96）：前缀和必须精确
+// 待办列表是不等高行（文字 28 / 多行文字 36 / 图片 96）：前缀和必须精确
 static void test_todo_row_offsets() {
     using sg::TodoKind;
-    CHECK_EQ(sg::todo_row_height(TodoKind::Text), 28.f);
-    CHECK_EQ(sg::todo_row_height(TodoKind::Link), 28.f);
-    CHECK_EQ(sg::todo_row_height(TodoKind::Image), 96.f);
+    auto item = [](TodoKind k, const wchar_t* text) {
+        TodoItem t;
+        t.kind = k;
+        if (text) t.text = text;
+        return t;
+    };
+    CHECK_EQ(sg::todo_row_height(item(TodoKind::Text, L"短")), 28.f);
+    CHECK_EQ(sg::todo_row_height(item(TodoKind::Link, L"https://a")), 28.f);
+    CHECK_EQ(sg::todo_row_height(item(TodoKind::Image, nullptr)), 96.f);
+    // 多行文字要画两行 → 36（28 会把上下各切掉几像素）
+    CHECK_EQ(sg::todo_row_height(item(TodoKind::Text, L"一\n二")), 36.f);
 
-    const std::vector<TodoKind> kinds = { TodoKind::Text, TodoKind::Image, TodoKind::Text };
-    const std::vector<float> off = sg::todo_row_offsets(kinds);
+    const std::vector<TodoItem> items = { item(TodoKind::Text, L"短"),
+                                          item(TodoKind::Image, nullptr),
+                                          item(TodoKind::Text, L"一\n二") };
+    const std::vector<float> off = sg::todo_row_offsets(items);
     CHECK_EQ(off.size(), size_t{4});
     CHECK_EQ(off[0], 0.f);
     CHECK_EQ(off[1], 28.f);
     CHECK_EQ(off[2], 124.f);  // 28 + 96
-    CHECK_EQ(off[3], 152.f);  // + 28
+    CHECK_EQ(off[3], 160.f);  // + 36（多行文字行）
 
     // 命中：行内任意 y 都落在该行；正好在边界上算下一行
     CHECK_EQ(sg::todo_row_at(off, 0.f), 0);
@@ -117,8 +127,8 @@ static void test_todo_row_offsets() {
     CHECK_EQ(sg::todo_row_at(off, 28.f), 1);
     CHECK_EQ(sg::todo_row_at(off, 123.9f), 1);
     CHECK_EQ(sg::todo_row_at(off, 124.f), 2);
-    CHECK_EQ(sg::todo_row_at(off, 151.9f), 2);
-    CHECK_EQ(sg::todo_row_at(off, 152.f), -1);  // 列表下方空白
+    CHECK_EQ(sg::todo_row_at(off, 159.9f), 2);
+    CHECK_EQ(sg::todo_row_at(off, 160.f), -1);  // 列表下方空白
     CHECK_EQ(sg::todo_row_at(off, -1.f), -1);
 
     // 空列表
@@ -128,8 +138,10 @@ static void test_todo_row_offsets() {
 
 static void test_todo_scroll_clamp_and_visibility() {
     using sg::TodoKind;
-    std::vector<TodoKind> kinds(10, TodoKind::Text);  // 10 行 × 28 = 280
-    const std::vector<float> off = sg::todo_row_offsets(kinds);
+    TodoItem row;
+    row.kind = TodoKind::Text;
+    std::vector<TodoItem> items(10, row);  // 10 行 × 28 = 280
+    const std::vector<float> off = sg::todo_row_offsets(items);
     const float viewport = 100.f;  // 只能看到约 3.5 行
 
     CHECK_EQ(sg::todo_scroll_for(off, viewport, 0.f, -1), 0.f);  // 没选中：不动

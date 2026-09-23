@@ -51,8 +51,7 @@ struct TodoState {
     int sel = -1;
     int hover = -1;
     float scroll = 0.f;                 // 像素
-    std::vector<TodoKind> kinds;        // 与 AppState::todos 同序（已排序）
-    std::vector<float> offsets;         // 行偏移前缀和
+    std::vector<float> offsets;         // 行偏移前缀和（不等高：按条目算）
     InlineEdit input;                   // 底部常驻输入框（新增条目）
     InlineEdit edit;                    // F2 改文字（临时叠在行上）
     long long pending_image_id = 0;     // 正在落盘的图片条目 id（0 = 无），失败时回滚它

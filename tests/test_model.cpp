@@ -322,6 +322,9 @@ static void test_todo_kind() {
     CHECK(sg::todo_kind_from_text(L"www.example.com") == sg::TodoKind::Text);  // 不是链接
     CHECK(sg::todo_kind_from_text(L"ftp://x") == sg::TodoKind::Text);          // 不是链接
     CHECK(sg::todo_kind_from_text(L"买牛奶\n第二行") == sg::TodoKind::Text);
+    // 多行粘贴里“链接 + 后面还有字”不是链接（否则会把一整块交给浏览器）
+    CHECK(sg::todo_kind_from_text(L"https://x\n第二行") == sg::TodoKind::Text);
+    CHECK(sg::todo_kind_from_text(L"https://x y") == sg::TodoKind::Text);
     CHECK(sg::todo_kind_from_text(L"") == sg::TodoKind::Text);
 
     CHECK(sg::is_image_path(L"C:\\a\\b.PNG"));

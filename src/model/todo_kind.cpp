@@ -55,7 +55,14 @@ TodoKind todo_kind_from_string(const std::wstring& s) {
 
 TodoKind todo_kind_from_text(const std::wstring& text) {
     const std::wstring t = trim(text);
-    if (starts_with_ci(t, L"http://") || starts_with_ci(t, L"https://")) return TodoKind::Link;
+    if (starts_with_ci(t, L"http://") || starts_with_ci(t, L"https://")) {
+        // 链接里不能有空白：多行粘贴（或手改数据）出来的 “https://x\n后面还有字”
+        // 不是链接，把它交给 ShellExecuteW 只会打开一个乱七八糟的地址。
+        for (const wchar_t c : t) {
+            if (is_space(c)) return TodoKind::Text;
+        }
+        return TodoKind::Link;
+    }
     return TodoKind::Text;
 }
 

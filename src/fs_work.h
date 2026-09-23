@@ -47,10 +47,13 @@ void fs_delete(const std::wstring& path, bool recycle, uint64_t request_id);
 void fs_paste(const std::vector<std::wstring>& srcs, const std::wstring& dest_dir, bool move,
               uint64_t request_id);
 
+// 全局单调的操作号：浏览视图与待办的图片落盘共用同一个池。
+// 各自从 0 开始递增会撞号，而 fs_take_op 只认数字 → 会取到对方的结果。
+uint64_t fs_next_op_id();
+
 // 把剪贴板位图存成 PNG（在工作线程做：4K 截图编码可达上百毫秒，不能卡 UI）。
 // dest_path 的目录不存在时会先建。
-void fs_save_image(const std::vector<uint8_t>& dib, const std::wstring& dest_path,
-                   uint64_t request_id);
+void fs_save_image(std::vector<uint8_t> dib, const std::wstring& dest_path, uint64_t request_id);
 
 // UI 线程：取回一次文件操作结果。request_id 不匹配时返回 false，并丢弃该结果。
 // note 用来带“跳过 N 个同名文件”这类非致命信息（可空）。

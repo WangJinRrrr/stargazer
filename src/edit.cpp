@@ -16,6 +16,15 @@ LRESULT CALLBACK edit_subclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_P
 
     switch (msg) {
         case WM_KEYDOWN:
+            // 全局热键（Ctrl+1..3 切视图、Ctrl+Tab 轮换）不该被输入框吃掉：
+            // 待办的常驻输入框一进视图就抢焦点，不转发的话视图永远切不动。
+            if ((::GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
+                ((wp >= '1' && wp <= '3') || wp == VK_TAB)) {
+                if (e->parent) {
+                    ::PostMessageW(e->parent, WM_KEYDOWN, wp, 0);
+                    return 0;
+                }
+            }
             // 视图先过一遍：方向键等导航键不该被输入框吃掉
             if (e->on_key && e->on_key(static_cast<UINT>(wp))) return 0;
             if (wp == VK_RETURN) {
@@ -24,8 +33,13 @@ LRESULT CALLBACK edit_subclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_P
                 HWND before = e->hwnd;
                 if (e->on_commit) e->on_commit(e->text());
                 if (e->hwnd == before) {
-                    e->close();
-                    if (e->parent) ::SetFocus(e->parent);
+                    if (e->keep_open_on_blur) {
+                        // 常驻输入框：回车只提交，框留着（内容由视图自己清）
+                        e->focus();
+                    } else {
+                        e->close();
+                        if (e->parent) ::SetFocus(e->parent);
+                    }
                 }
                 return 0;
             }
@@ -49,12 +63,11 @@ LRESULT CALLBACK edit_subclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_P
             // 点到别处视为提交（输入框的最后内容不会白打）
             if (e && e->hwnd && !e->committing) {
                 e->committing = true;
+                // 提交回调里可能重开一个输入框（常驻框：close + open）→
+                // 那种情况下别把刚建好的新框关掉（否则框看着还在，实际已经死了）
+                HWND before = e->hwnd;
                 if (e->on_commit) e->on_commit(e->text());
-                if (e->keep_open_on_blur) {
-                    // 搜索框：内容已提交，输入框留着（网格抢焦点时不能让它消失）
-                } else {
-                    e->close();
-                }
+                if (!e->keep_open_on_blur && e->hwnd == before) e->close();
                 e->committing = false;
                 return 0;
             }
@@ -100,9 +113,11 @@ void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initi
                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                          DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
 
-    hwnd = ::CreateWindowExW(0, L"EDIT", initial.c_str(), WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-                             rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, parent,
-                             nullptr, ::GetModuleHandleW(nullptr), nullptr);
+    const DWORD style = WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL |
+                        (multiline ? (ES_MULTILINE | ES_AUTOVSCROLL) : 0);
+    hwnd = ::CreateWindowExW(0, L"EDIT", initial.c_str(), style, rc.left, rc.top,
+                             rc.right - rc.left, rc.bottom - rc.top, parent, nullptr,
+                             ::GetModuleHandleW(nullptr), nullptr);
     if (!hwnd) {
         if (font) {
             ::DeleteObject(font);  // 创建失败时不留下泄漏的字体

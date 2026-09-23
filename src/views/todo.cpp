@@ -1,5 +1,4 @@
 #include "views/todo.h"
-
 #include <shellapi.h>  // ShellExecuteW
 
 #include <algorithm>
@@ -101,7 +100,7 @@ void draw_row(App& app, int index, const D2D1_RECT_F& row) {
     const float cb = 16.f;
     const float cy = (item.kind == TodoKind::Image)
                          ? row.top + 8.f
-                         : row.top + (todo_row_height(item.kind) - cb) / 2.f;
+                         : row.top + (todo_row_height(item) - cb) / 2.f;
     const D2D1_RECT_F box =
         D2D1::RectF(row.left + 6.f, cy, row.left + 6.f + cb, cy + cb);
     if (item.done) {
@@ -158,7 +157,7 @@ void draw_row(App& app, int index, const D2D1_RECT_F& row) {
         r.text(lab, item.text, r.format(13.f), link_color);
         const float w = std::min(text_width(r, item.text, r.format(13.f), content_w), content_w);
         if (w > 4.f) {
-            const float uy = row.top + todo_row_height(TodoKind::Text) - 8.f;
+            const float uy = row.top + todo_row_height(item) - 8.f;
             r.fill_rect(D2D1::RectF(content_x, uy, content_x + w, uy + 1.f), link_color);
         }
     } else {
@@ -187,10 +186,7 @@ int todo_rows_visible(D2D1_SIZE_F client) {
 
 void todo_rebuild_layout(AppState& s, D2D1_SIZE_F client) {
     TodoState& t = s.todo;
-    t.kinds.clear();
-    t.kinds.reserve(s.todos.size());
-    for (const auto& item : s.todos) t.kinds.push_back(item.kind);
-    t.offsets = todo_row_offsets(t.kinds);
+    t.offsets = todo_row_offsets(s.todos);
 
     const int n = static_cast<int>(s.todos.size());
     if (t.sel >= n) t.sel = n > 0 ? n - 1 : -1;
@@ -214,7 +210,7 @@ bool todo_checkbox_hit_in_row(App& app, int row, D2D1_POINT_2F pt) {
     if (row < 0 || row >= static_cast<int>(s.todos.size())) return false;
     const D2D1_RECT_F list = todo_list_rect(app.render.client_logical());
     const float top = list.top + s.todo.offsets[static_cast<size_t>(row)] - s.todo.scroll;
-    const float h = todo_row_height(s.todos[static_cast<size_t>(row)].kind);
+    const float h = todo_row_height(s.todos[static_cast<size_t>(row)]);
     if (pt.y < top || pt.y > top + h) return false;
     // 复选框热区放宽一点（点到行左端就算），比精确的 16px 方块好点得多
     return pt.x >= list.left && pt.x <= list.left + 30.f;
@@ -243,7 +239,7 @@ void todo_render(App& app) {
         for (int i = first; i < n; ++i) {
             const float y = list.top + t.offsets[static_cast<size_t>(i)] - t.scroll;
             if (y > list.bottom) break;
-            const float h = todo_row_height(s.todos[static_cast<size_t>(i)].kind);
+            const float h = todo_row_height(s.todos[static_cast<size_t>(i)]);
             draw_row(app, i, D2D1::RectF(list.left, y, list.right, y + h));
         }
     }
@@ -330,6 +326,7 @@ bool todo_keydown(App& app, UINT vk) {
 void todo_sync_input(App& app) {
     TodoState& t = app.state.todo;
     const RECT rc = app.render.to_physical(todo_input_rect(app.render.client_logical()));
+    t.input.multiline = true;  // 多行粘贴要原样收下（回车仍然由子类拦下来当“提交”）
     if (t.input.is_open()) {
         t.input.set_rect(rc);
         return;
@@ -337,18 +334,17 @@ void todo_sync_input(App& app) {
     t.input.open(
         app.panel, rc, L"", app.render.dpi,
         [&app](const std::wstring& text) {
-            // 常驻输入框：回车后必须立刻回来。先自己 close 再重开，
-            // 这样 InlineEdit 里“hwnd 变了就不再关一次”的既有判断会保住新开的框。
-            TodoState& st = app.state.todo;
-            st.input.close();
-            todo_sync_input(app);
+            // 常驻输入框（keep_open_on_blur）：回车后自己还在，只需清空。
+            // 这里**不能 focus()**：失焦提交也会走这里，抢焦点会把刚打开的 F2 改名框弄失焦。
             todo_add_text(app, text);
-            st.input.set_text(L"");
-            st.input.focus();
+            app.state.todo.input.set_text(L"");
             ::InvalidateRect(app.panel, nullptr, FALSE);
         },
         nullptr);
-    // ↑↓ 等导航键要从输入框转给列表（输入框自己会吃掉方向键）；Ctrl+V 要看剪贴板里是什么
+    // 失焦不关：常驻输入框只要还停在该视图就该在（点列表、点标签都不该让它消失）
+    t.input.keep_open_on_blur = true;
+    // ↑↓ 进列表；Ctrl+V 看剪贴板里是什么；**其余按键一律交回 EDIT**。
+    // （Ctrl+1..3 等全局热键由 edit.cpp 统一转发，不在这里各自处理）
     t.input.on_key = [&app](UINT vk) {
         if (vk == L'V' && (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) {
             // 有文件或位图 → 自己接管（走待办流水线）；纯文本交回 EDIT（保留多行粘贴体验）
@@ -356,40 +352,30 @@ void todo_sync_input(App& app) {
             const bool has_files = !clipboard_get_paths(move).empty();
             std::wstring text;
             const bool has_text = clipboard_get_text(text) && !trim(text).empty();
-            std::vector<uint8_t> dib;
-            const bool has_bitmap = !has_files && !has_text && clipboard_get_image_dib(dib);
+            // 只问“有没有位图”，不真把 DIB 读出来：4K 截图几十 MB，
+            // 这里读一次、todo_add_from_clipboard 再读一次，白拷两份（Review M5）
+            const bool has_bitmap = !has_files && !has_text &&
+                                    (::IsClipboardFormatAvailable(CF_DIBV5) ||
+                                     ::IsClipboardFormatAvailable(CF_DIB));
             if (has_files || has_bitmap) {
                 todo_add_from_clipboard(app);
                 return true;
             }
             return false;
         }
-        switch (vk) {
-            case VK_UP:
-            case VK_DOWN:
-            case VK_PRIOR:
-            case VK_NEXT:
-            case VK_HOME:
-            case VK_END: {
-                HWND parent = app.state.todo.input.parent;
-                if (parent) {
-                    if (vk == VK_DOWN && app.state.todo.sel < 0 && !app.state.todos.empty()) {
-                        app.state.todo.sel = 0;
-                        app.state.todo.scroll = todo_scroll_for(
-                            app.state.todo.offsets,
-                            todo_list_rect(app.render.client_logical()).bottom -
-                                todo_list_rect(app.render.client_logical()).top,
-                            app.state.todo.scroll, 0);
-                    }
-                    ::PostMessageW(parent, WM_KEYDOWN, vk, 0);
-                    ::SetFocus(parent);
-                    ::InvalidateRect(parent, nullptr, FALSE);
-                }
-                return true;
+        // 从输入框按 ↑↓ 进列表：只把按键转给面板，**不要在这里预先设 sel** ——
+        // 先设 0 再转发 VK_DOWN 会让第一次 ↓ 直接落到第二行。
+        // Home/End/PgUp/PgDn 不转发：在输入框里它们是“光标到头/到尾”，本来就该归 EDIT。
+        if (vk == VK_UP || vk == VK_DOWN) {
+            HWND parent = app.state.todo.input.parent;
+            if (parent) {
+                ::PostMessageW(parent, WM_KEYDOWN, vk, 0);
+                ::SetFocus(parent);
+                ::InvalidateRect(parent, nullptr, FALSE);
             }
-            default:
-                return false;
+            return true;
         }
+        return false;
     };
 }
 
@@ -401,13 +387,18 @@ void todo_activate(App& app) {
 }
 
 void todo_leave(App& app) {
+    // 切走/隐藏时把没提交的文字收下（用户以为“打上去就记上了”）；全是空白的就算了，
+    // 不留一个看不见内容的空条目。
+    const std::wstring typed = app.state.todo.input.text();
     app.state.todo.input.close();
     app.state.todo.edit.close();
+    if (!trim(typed).empty()) todo_add_text(app, typed);
 }
 
 void todo_add_text(App& app, const std::wstring& text) {
     // Task 4 就需要它：底部输入框的回车要能真的记一条（剪贴板/拖入/图片在 Task 6）
-    AppState& s = app.state;    if (text.empty()) return;
+    AppState& s = app.state;
+    if (text.empty()) return;
     TodoItem item;
     item.id = next_todo_id(s.todos);
     item.created = static_cast<long long>(::time(nullptr));
@@ -452,7 +443,7 @@ bool todo_add_from_clipboard(App& app) {
     // 3) 位图（截图）：落盘成 data\images\<id>.png
     std::vector<uint8_t> dib;
     if (clipboard_get_image_dib(dib)) {
-        todo_add_clipboard_image(app, dib);
+        todo_add_clipboard_image(app, std::move(dib));
         return true;
     }
     return false;  // 剪贴板什么都没有：不提示（Ctrl+V 粘空剪贴板是常见误操作）
@@ -486,9 +477,12 @@ void todo_add_image_ref(App& app, const std::wstring& path) {
     s.todo.sel = 0;
     s.todo.scroll = 0.f;
     todo_rebuild_layout(s, app.render.client_logical());
+    // 马上校验一次存在性：粘进来的可能就是个已经被改过名的路径，
+    // 不查的话它会先当正常条目显示（占位色块），要等下次呼出才变灰。
+    app_request_fs_checks(app);
 }
 
-void todo_add_clipboard_image(App& app, const std::vector<uint8_t>& dib) {
+void todo_add_clipboard_image(App& app, std::vector<uint8_t> dib) {
     AppState& s = app.state;
     TodoItem item;
     item.id = next_todo_id(s.todos);
@@ -506,8 +500,8 @@ void todo_add_clipboard_image(App& app, const std::vector<uint8_t>& dib) {
     s.todo.scroll = 0.f;
     todo_rebuild_layout(s, app.render.client_logical());
     s.todo.pending_image_id = id;
-    ++s.todo.op_id;
-    fs_save_image(dib, attach, s.todo.op_id);
+    s.todo.op_id = fs_next_op_id();
+    fs_save_image(std::move(dib), attach, s.todo.op_id);
 }
 
 void todo_on_image_saved(App& app, uint64_t request_id) {
@@ -529,6 +523,15 @@ void todo_on_image_saved(App& app, uint64_t request_id) {
         app_notify(app, L"图片保存失败：" + error);
         return;
     }
+    // 落盘成功：若这张图在这期间已经被删掉（编码要上百毫秒，来得及），
+    // 刚写下去的副本就成了没人指向的孤儿 → 顺手清掉。
+    const std::wstring own =
+        join_path(join_path(app.paths.data_dir, L"images"), std::to_wstring(id) + L".png");
+    const bool still_there =
+        std::any_of(s.todos.begin(), s.todos.end(), [id](const TodoItem& t) { return t.id == id; });
+    if (!still_there) ::DeleteFileW(own.c_str());
+    // 取图失败会被记进负缓存（避免反复问 Shell）——新图刚写好，得给它一次机会
+    images_forget_failures();
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
@@ -605,7 +608,7 @@ void todo_reveal_selected(App& app) {
     if (s.todo.sel < 0 || s.todo.sel >= static_cast<int>(s.todos.size())) return;
     const std::wstring attach = s.todos[static_cast<size_t>(s.todo.sel)].attach;
     if (attach.empty()) return;
-    const std::wstring arg = L"/select," + attach;
+    const std::wstring arg = L"/select,\"" + attach + L"\"";
     ::ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
 }
 
@@ -637,7 +640,7 @@ void todo_rename_selected(App& app) {
     const D2D1_RECT_F list = todo_list_rect(app.render.client_logical());
     const float top = list.top + t.offsets[static_cast<size_t>(t.sel)] - t.scroll;
     const D2D1_RECT_F input =
-        D2D1::RectF(list.left, top, list.right, top + todo_row_height(item.kind));
+        D2D1::RectF(list.left, top, list.right, top + todo_row_height(item));
     const RECT rc = app.render.to_physical(input);
     const long long id = item.id;
     const std::wstring current = item.text;

@@ -52,6 +52,6 @@ void todo_on_image_saved(App& app, uint64_t request_id);
 
 // 内部：记一条引用型图片 / 一条剪贴板位图（落盘后才能看到）
 void todo_add_image_ref(App& app, const std::wstring& path);
-void todo_add_clipboard_image(App& app, const std::vector<uint8_t>& dib);
+void todo_add_clipboard_image(App& app, std::vector<uint8_t> dib);
 
 }  // namespace sg

@@ -208,6 +208,45 @@ static void test_png_encode_dib() {
                 CHECK(rgba[2] > 200);  // R
                 CHECK(rgba[1] < 60);   // G
                 CHECK(rgba[0] < 60);   // B
+                CHECK_EQ(rgba[3], 255u);  // A：能看见（32bpp 里 alpha 写的就是 255）
+            }
+            if (frame) frame->Release();
+            if (dec) dec->Release();
+            fac->Release();
+        }
+        ::DeleteFileW(path.c_str());
+    }
+
+    // alpha 全 0 的 32bpp DIB（有些程序就是这么拷的，意思是“我不管 alpha”）：
+    // 照抄会得到一张全透明 PNG（贴出来是白块）→ 必须当不透明处理
+    {
+        const std::wstring path = sg::join_path(dir, L"t32_zeroalpha.png");
+        ::DeleteFileW(path.c_str());
+        std::vector<uint8_t> dib = make_dib(8, 4, 32, false);
+        const int stride = ((8 * 32 + 31) / 32) * 4;
+        for (int y = 0; y < 4; ++y) {
+            uint8_t* row = dib.data() + sizeof(BITMAPINFOHEADER) + static_cast<size_t>(y) * stride;
+            for (int x = 0; x < 8; ++x) row[x * 4 + 3] = 0;
+        }
+        std::wstring err;
+        CHECK(sg::png_encode_dib(path, dib, err));
+        IWICImagingFactory* fac = nullptr;
+        if (SUCCEEDED(::CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                         IID_PPV_ARGS(&fac)))) {
+            IWICBitmapDecoder* dec = nullptr;
+            IWICBitmapFrameDecode* frame = nullptr;
+            if (SUCCEEDED(fac->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+                                                         WICDecodeMetadataCacheOnDemand, &dec))) {
+                dec->GetFrame(0, &frame);
+            }
+            if (frame) {
+                std::vector<uint8_t> rgba(8u * 4u * 4u);
+                CHECK(SUCCEEDED(frame->CopyPixels(nullptr, 8 * 4,
+                                                  static_cast<UINT>(rgba.size()), rgba.data())));
+                CHECK(rgba[2] > 200);
+                CHECK_EQ(rgba[3], 255u);  // 不能是 0
+            } else {
+                CHECK(false);
             }
             if (frame) frame->Release();
             if (dec) dec->Release();

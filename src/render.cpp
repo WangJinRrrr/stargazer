@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #include "icons.h"
+#include "images.h"
 
 namespace sg {
 
@@ -26,6 +27,7 @@ bool Renderer::sync_dpi() {
     // 图标位图也属于旧设备，必须一起丢弃（否则会把旧设备的位图画到新设备上）
     discard_device_resources();
     icons_on_device_lost();
+    images_on_device_lost();
     return true;
 }
 
@@ -104,6 +106,7 @@ void Renderer::end() {
         // 设备丢失：丢弃设备相关资源，下一帧重建。图标位图由 icons 模块自理
         discard_device_resources();
         icons_on_device_lost();
+        images_on_device_lost();
     }
 }
 

@@ -4,17 +4,19 @@
 
 namespace sg {
 
-float todo_row_height(TodoKind kind) {
-    return kind == TodoKind::Image ? kTodoRowImageH : kTodoRowTextH;
+float todo_row_height(const TodoItem& item) {
+    if (item.kind == TodoKind::Image) return kTodoRowImageH;
+    // 多行文字画两行（规范 §5）——36 才装得下两行 13pt，28 会把上下各切掉几像素
+    return item.text.find(L'\n') == std::wstring::npos ? kTodoRowTextH : kTodoRowTextTallH;
 }
 
-std::vector<float> todo_row_offsets(const std::vector<TodoKind>& kinds) {
+std::vector<float> todo_row_offsets(const std::vector<TodoItem>& items) {
     std::vector<float> offsets;
-    offsets.reserve(kinds.size() + 1);
+    offsets.reserve(items.size() + 1);
     float y = 0.f;
     offsets.push_back(y);
-    for (const TodoKind k : kinds) {
-        y += todo_row_height(k);
+    for (const auto& item : items) {
+        y += todo_row_height(item);
         offsets.push_back(y);
     }
     return offsets;

@@ -3,6 +3,7 @@
 #include <shellapi.h>
 
 #include <condition_variable>
+#include <atomic>
 #include <deque>
 #include <mutex>
 #include <set>
@@ -254,6 +255,11 @@ bool fs_init(HWND notify_hwnd) {
     return true;
 }
 
+uint64_t fs_next_op_id() {
+    static std::atomic<uint64_t> next{0};
+    return ++next;  // 从 1 开始：0 永远不会匹配到真结果
+}
+
 void fs_shutdown() {
     {
         std::lock_guard<std::mutex> lk(g_mu);
@@ -390,11 +396,10 @@ void fs_paste(const std::vector<std::wstring>& srcs, const std::wstring& dest_di
     g_cv.notify_one();
 }
 
-void fs_save_image(const std::vector<uint8_t>& dib, const std::wstring& dest_path,
-                   uint64_t request_id) {
+void fs_save_image(std::vector<uint8_t> dib, const std::wstring& dest_path, uint64_t request_id) {
     Request r;
     r.kind = Kind::SaveImage;
-    r.dib = dib;
+    r.dib = std::move(dib);  // 4K 截图十几 MB，不再拷一份
     r.path = dest_path;
     r.id = request_id;
     {

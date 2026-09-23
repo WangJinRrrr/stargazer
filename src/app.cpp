@@ -239,6 +239,7 @@ static void app_set_view(App& app, View v) {
     AppState& s = app.state;
     s.box_view.edit.close();
     s.browse.path_edit.close();
+    todo_leave(app);  // 常驻输入框 keep_open_on_blur，切视图时必须显式关掉（顺手收下没提交的文字）
     s.view = v;
     if (v == View::Box) {
         s.box_view.sel = -1;
@@ -249,8 +250,7 @@ static void app_set_view(App& app, View v) {
         box_request_check(app);  // 切进来也要校验，否则失效标记是上一次的
     }
     if (v == View::Todo) {
-        todo_rebuild_layout(s, app.render.client_logical());
-        todo_sync_input(app);
+        todo_activate(app);          // 重建布局 + 打开输入框并把焦点给它（进来就能直接打字）
         app_request_fs_checks(app);  // 引用型图片的存在性校验（与盒子共用同一个回调）
     }
     if (v == View::Browse) {
@@ -384,6 +384,10 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_SIZE:
+            // 窗口变小再变大后，待办列表可能还滚在尽头之外（下面一片空白）→ 重算并夹紧
+            if (app && app->state.view == View::Todo) {
+                todo_rebuild_layout(app->state, app->render.client_logical());
+            }
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         case WM_EXITSIZEMOVE:
@@ -911,11 +915,10 @@ void app_show(App& app) {
 
 void app_hide(App& app) {
     if (!app.panel) return;
-    app_save_if_dirty(app);  // 用户改完就切走很自然，落盘不能等退出
     app.state.box_view.edit.close();  // 悬空的输入框比看不见的窗口更让人困惑
     app.state.browse.path_edit.close();
-    app.state.todo.input.close();
-    app.state.todo.edit.close();
+    todo_leave(app);         // 先把没提交的文字收下，否则它赶不上这次落盘
+    app_save_if_dirty(app);  // 用户改完就切走很自然，落盘不能等退出
     ::ShowWindow(app.panel, SW_HIDE);
     // 隐藏时把绘制表面还给系统：150% 缩放下 1440x930 的表面本身就有 5MB+。
     // 复用设备丢失那条路径，下次 begin() 会自动重建。

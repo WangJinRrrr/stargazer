@@ -259,7 +259,7 @@ void browse_open_selected(App& app) {
 void browse_reveal_selected(App& app) {
     const std::wstring path = browse_sel_path(app.state);
     if (path.empty()) return;
-    const std::wstring arg = L"/select," + path;
+    const std::wstring arg = L"/select,\"" + path + L"\"";
     ::ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
 }
 
@@ -279,7 +279,7 @@ void browse_paste(App& app) {
         set_note(app, L"剪贴板里没有文件（先在资源管理器里 Ctrl+C）");
         return;
     }
-    ++s.browse.op_id;
+    s.browse.op_id = fs_next_op_id();
     fs_paste(srcs, s.browse.path, move, s.browse.op_id);
     set_note(app, move ? L"正在移动…" : L"正在复制…");
 }
@@ -288,7 +288,7 @@ void browse_new_folder(App& app) {
     AppState& s = app.state;
     if (s.browse.path.empty()) return;
     const std::wstring name = new_folder_name(taken_names(s));
-    ++s.browse.op_id;
+    s.browse.op_id = fs_next_op_id();
     fs_mkdir(append_name(s.browse.path, name), s.browse.op_id);
     set_note(app, L"正在新建：" + name);
 }
@@ -304,7 +304,7 @@ void browse_delete_selected(App& app, bool recycle) {
             return;
         }
     }
-    ++s.browse.op_id;
+    s.browse.op_id = fs_next_op_id();
     fs_delete(path, recycle, s.browse.op_id);
     set_note(app, recycle ? L"已移到回收站" : L"正在永久删除…");
 }
@@ -344,7 +344,7 @@ void browse_rename_selected(App& app) {
                     return;
                 }
             }
-            ++st.browse.op_id;
+            st.browse.op_id = fs_next_op_id();
             fs_rename(append_name(dir, current), append_name(dir, t), st.browse.op_id);
             st.browse.note = L"正在重命名…";
             ::InvalidateRect(app.panel, nullptr, FALSE);
