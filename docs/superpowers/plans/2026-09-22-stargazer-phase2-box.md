@@ -209,7 +209,20 @@ Box 视图此时还没实现，先画一行"收纳盒：尚未实现"的灰字�
 
 - [ ] **Step 4: 验证与提交**
 
-验证：程序化投递 `Ctrl+2`（或用 `PostMessage` 直接发 `WM_KEYDOWN` 带 `Ctrl` 状态不可靠，改用**视图标签的鼠标命中**——但鼠标投递在本机不可靠，因此实际采用的方式是：临时加一个 `--view=2` 命令行参数用于验收，或直接改 `ui.txt` 的 `view=1` 后重启）。取证：探针 ASCII 图在 `view=0` 与 `view=1` 下不同。
+鼠标消息在本机不可靠（实测被真实点击干扰），所以不靠投递 click 验证视图切换。用已定好的持久化路径：
+
+```powershell
+# ui.txt 写入 view 1（下标从 1 还是 0 由本任务的实现定，写清楚并前后一致）
+Set-Content "$PWD\build\Release\data\ui.txt" "w`t960`nh`t620`nview`t1" -Encoding utf8
+Start-Process build\Release\stargazer.exe
+Start-Sleep 3
+& powershell -NoProfile -ExecutionPolicy Bypass -File `
+  ".superpowers\sdd\2026-09-22-stargazer-phase1-kernel-launcher\gui-probe.ps1" -Ascii "0,0,1440,300"
+```
+
+预期：ASCII 图里能看到四个视图标签、其中第二个被强调色填充，且原来的启动板标签行消失了。
+再把 `view` 改回 `0` 重启，图应与 Task 1 的新基线一致。两次取证贴进 ledger。
+不需要临时代码，`ui.txt` 就是验收入口。
 
 提交信息：`feat(app): 视图切换框架（顶层标签行 + Ctrl+1..4 + ui.txt 记忆）`
 
@@ -362,7 +375,7 @@ else if (s.view == View::Box) {
 
 - [ ] **Step 2: 验收与提交**
 
-验证：拖入无法自动化（OLE 拖放不可编程模拟），改为**人工验收项**，在 Task 8 列出。本步只验证编译通过 + 分发逻辑被走到（可用一个临时的 `--drop-test <path>` 命令行参数直接调用 hook，验证分发结果写进了正确的盒子）。
+验证：拖入无法自动化（OLE 拖放不可编程模拟），改为**人工验收项**，在 Task 8 列出。本步只验证编译通过与分发逻辑正确：加一个**临时**的 `--drop-test <path>` 命令行参数，它启动后直接调一次 hook（带上该路径），用来确认分发写进了正确的容器；验证完在 Task 8 删掉这个参数（在代码里标 `TEMP(Task 8 删除)`）。
 
 ---
 
