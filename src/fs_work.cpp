@@ -2,6 +2,7 @@
 
 #include <shellapi.h>
 
+#include <algorithm>
 #include <condition_variable>
 #include <atomic>
 #include <deque>
@@ -244,6 +245,97 @@ void worker_main() {
     }
 }
 
+// ── 目录监视（浏览视图的自动刷新）──
+// 一条长驻线程阻塞在 ReadDirectoryChangesW 上，不能塞进上面那条工作线程：
+// 它一阻塞就是无限期，存在性校验与文件操作会全部堵在后面。
+std::mutex g_watch_mu;
+std::wstring g_watch_dir;  // 想监视的目录（空 = 不监视）
+HANDLE g_watch_wake = nullptr;  // 重定向信号（manual reset）
+HANDLE g_watch_quit = nullptr;  // 退出信号（manual reset）
+std::thread g_watch_thread;
+
+void watch_main() {
+    // 一次复制/解压会连着发成百条通知，按寂静期合并：只通知 UI 重载一次
+    constexpr ULONGLONG kCoalesceMs = 300;
+    std::vector<BYTE> buf(8 * 1024);
+    std::wstring current;
+    HANDLE dir = INVALID_HANDLE_VALUE;
+    HANDLE ov_ev = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ov_ev) return;  // 连事件都建不出来：不监视就是了（没它会在 Wait 上转圈烧 CPU）
+    OVERLAPPED ov{};
+    ov.hEvent = ov_ev;
+    ULONGLONG last_notify = 0;
+
+    for (;;) {
+        if (::WaitForSingleObject(g_watch_quit, 0) == WAIT_OBJECT_0) break;
+
+        std::wstring want;
+        {
+            std::lock_guard<std::mutex> lk(g_watch_mu);
+            want = g_watch_dir;
+        }
+        if (want != current || dir == INVALID_HANDLE_VALUE) {
+            if (dir != INVALID_HANDLE_VALUE) {
+                ::CancelIoEx(dir, nullptr);  // 挂着的读作废（结果丢弃）
+                ::CloseHandle(dir);
+                dir = INVALID_HANDLE_VALUE;
+            }
+            current = want;
+        }
+        if (dir == INVALID_HANDLE_VALUE && !current.empty()) {
+            dir = ::CreateFileW(current.c_str(), FILE_LIST_DIRECTORY,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+                                nullptr);
+        }
+        if (dir == INVALID_HANDLE_VALUE) {
+            // 没东西可监视（视图切走了）/ 打不开（网盘没连、权限不足）：
+            // 等重定向信号；打不开时每 5 秒重试一次，网络盘挂上来能自己接上
+            const DWORD waitMs = current.empty() ? INFINITE : 5000;
+            HANDLE idle[2] = { g_watch_wake, g_watch_quit };
+            const DWORD r = ::WaitForMultipleObjects(2, idle, FALSE, waitMs);
+            if (r == WAIT_OBJECT_0 + 1) break;  // 退出
+            if (r == WAIT_OBJECT_0) ::ResetEvent(g_watch_wake);
+            continue;
+        }
+
+        ::ResetEvent(ov_ev);
+        DWORD got = 0;
+        if (!::ReadDirectoryChangesW(dir, buf.data(), static_cast<DWORD>(buf.size()), FALSE,
+                                     FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+                                         FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE,
+                                     &got, &ov, nullptr)) {
+            ::CloseHandle(dir);
+            dir = INVALID_HANDLE_VALUE;
+            continue;
+        }
+
+        HANDLE waits[2] = { ov_ev, g_watch_wake };
+        if (::WaitForMultipleObjects(2, waits, FALSE, INFINITE) == WAIT_OBJECT_0 + 1) {
+            ::CancelIoEx(dir, &ov);  // 换目录 / 退出：取消这次读，回上层重开
+            ::ResetEvent(g_watch_wake);
+            continue;
+        }
+        const ULONGLONG now = ::GetTickCount64();
+        if (now - last_notify < kCoalesceMs) continue;
+        last_notify = now;
+        HWND notify = nullptr;
+        {
+            std::lock_guard<std::mutex> lk(g_mu);
+            notify = g_notify;
+        }
+        // 只通知“目录变了”，不自己去枚举：UI 线程用 browse_on_dir_changed 重载，
+        // 顺带走它那套 requestId 与防抖，监视线程不与工作线程抢磁盘
+        if (notify) ::PostMessageW(notify, WM_APP_DIR_CHANGED, 0, 0);
+    }
+
+    if (dir != INVALID_HANDLE_VALUE) {
+        ::CancelIoEx(dir, nullptr);
+        ::CloseHandle(dir);
+    }
+    ::CloseHandle(ov_ev);
+}
+
 }  // namespace
 
 bool fs_init(HWND notify_hwnd) {
@@ -269,7 +361,25 @@ void fs_shutdown() {
     g_cv.notify_all();
     if (g_worker.joinable()) g_worker.join();
 
+    // 监视线程要先信号退出再 join：它可能正阻塞在 ReadDirectoryChangesW 上。
+    // 必须在释放 g_mu 之后做 —— watch_main 自己会取 g_mu 读通知窗口，抱着锁 join 会死锁。
+    if (g_watch_quit) ::SetEvent(g_watch_quit);
+    if (g_watch_wake) ::SetEvent(g_watch_wake);
+    if (g_watch_thread.joinable()) g_watch_thread.join();
+    if (g_watch_wake) {
+        ::CloseHandle(g_watch_wake);
+        g_watch_wake = nullptr;
+    }
+    if (g_watch_quit) {
+        ::CloseHandle(g_watch_quit);
+        g_watch_quit = nullptr;
+    }
+
     std::lock_guard<std::mutex> lk(g_mu);
+    {
+        std::lock_guard<std::mutex> wl(g_watch_mu);
+        g_watch_dir.clear();
+    }
     g_queue.clear();
     g_queued.clear();
     g_done_exists.clear();
@@ -315,6 +425,12 @@ void fs_list_dir(const std::wstring& dir, uint64_t request_id) {
     {
         std::lock_guard<std::mutex> lk(g_mu);
         if (!g_worker.joinable()) return;
+        // 只保留最新一次枚举：目录自动刷新会在一个大复制/解压期间反复投递，
+        // 过期的那些结果 UI 本来就会按 requestId 丢掉，留在队列里只会把后面的
+        // 文件操作堵在一串白跑的目录扫描后面（同一时刻只有一个浏览视图）
+        g_queue.erase(std::remove_if(g_queue.begin(), g_queue.end(),
+                                     [](const Request& r) { return r.kind == Kind::ListDir; }),
+                      g_queue.end());
         Request r;
         r.kind = Kind::ListDir;
         r.path = dir;
@@ -323,6 +439,28 @@ void fs_list_dir(const std::wstring& dir, uint64_t request_id) {
         queued = true;
     }
     if (queued) g_cv.notify_one();
+}
+
+void fs_watch_dir(const std::wstring& dir) {
+    // 路径没变就不打扰监视线程：browse_refresh 每次刷新都会调到这里，
+    // 否则每次重载都要重开一次目录句柄
+    bool start = false;
+    {
+        std::lock_guard<std::mutex> lk(g_watch_mu);
+        if (g_watch_dir == dir) return;
+        g_watch_dir = dir;
+        start = !g_watch_thread.joinable();
+    }
+    if (start) {
+        {
+            std::lock_guard<std::mutex> lk(g_mu);
+            if (!g_worker.joinable()) return;  // 已经 fs_shutdown 过了
+        }
+        g_watch_wake = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        g_watch_quit = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        g_watch_thread = std::thread(watch_main);
+    }
+    if (g_watch_wake) ::SetEvent(g_watch_wake);
 }
 
 bool fs_take_dir(uint64_t request_id, std::wstring& dir, std::vector<FsEntry>& entries,

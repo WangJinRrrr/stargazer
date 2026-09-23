@@ -29,6 +29,9 @@ int box_hittest(App& app, D2D1_POINT_2F pt);
 void box_render(App& app);
 // 返回 true 表示按键已被消费
 bool box_keydown(App& app, UINT vk);
+// 输入即跳（Explorer 的 type-ahead）：在网格里打字直接跳到第一个名字含它的条目。
+// 盒子条目是手挑的几十条，跳过去比“藏条目的筛选框”直接，也不用多一层下标映射
+void box_typeahead(App& app, wchar_t ch);
 
 // 呼出时投递当前盒子的存在性校验（工作线程 B）；结果在 UI 线程按 path 回填
 void box_request_check(App& app);

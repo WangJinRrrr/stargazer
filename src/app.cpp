@@ -520,7 +520,7 @@ static void app_set_view(App& app, View v) {
     if (app.panel == nullptr || v == app.state.view) return;
     AppState& s = app.state;
     s.box_view.edit.close();
-    s.browse.path_edit.close();
+    browse_leave(app);  // 收起路径输入框 + 停止目录监视（切走就没必要盯着了）
     todo_leave(app);  // 常驻输入框 keep_open_on_blur，切视图时必须显式关掉（顺手收下没提交的文字）
     s.view = v;
     if (v == View::Box) {
@@ -590,6 +590,11 @@ LRESULT CALLBACK ctl_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_APP_DIR_LOADED:
             if (app && app->panel) browse_on_dir_loaded(*app);
+            return 0;
+        case WM_APP_DIR_CHANGED:
+            // 被监视的目录被外部改了（新建/删除/改名/下载完）：重载一次。
+            // 只在浏览视图里做；切走/隐藏时已经停止监视
+            if (app && app->panel && app->state.view == View::Browse) browse_on_dir_changed(*app);
             return 0;
         case WM_APP_FS_OP_DONE:
             if (app && app->panel) {
@@ -691,6 +696,8 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app && app->state.view == View::Todo) {
                 todo_rebuild_layout(app->state, app->render.client_logical());
             }
+            // 子编辑框（路径栏/筛选框）不会自己跟着窗口走，得手动摆一下
+            if (app) browse_sync_edit_rects(*app);
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         case WM_EXITSIZEMOVE:
@@ -784,6 +791,15 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     ::InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
                 }
+                // 落在网格里：高亮目标格子（松手才真正换位），让落点所见即所到。
+                // 悬停高亮复用 grid 的 hover，所以拖拽中也要更新它。
+                if (over < 0) {
+                    const int cell = box_hittest(*app, lpt);
+                    if (cell != app->state.box_view.hover) {
+                        app->state.box_view.hover = cell;
+                        changed = true;
+                    }
+                }
                 if (changed) ::InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
@@ -840,7 +856,13 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (app->state.view == View::Browse) {
-                // 路径栏点击 → 开输入框；列表点击 → 选中行
+                // 路径栏点击 → 开输入框；筛选框点击 → 开筛选框；列表点击 → 选中行
+                const D2D1_RECT_F fbar = browse_filter_rect(cs);
+                if (lpt.x >= fbar.left && lpt.x <= fbar.right && lpt.y >= fbar.top &&
+                    lpt.y <= fbar.bottom) {
+                    browse_edit_filter(*app);
+                    return 0;
+                }
                 const D2D1_RECT_F bar = browse_path_rect(cs);
                 if (lpt.x >= bar.left && lpt.x <= bar.right && lpt.y >= bar.top &&
                     lpt.y <= bar.bottom) {
@@ -896,13 +918,25 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 app->internal_drag = false;
                 ::ReleaseCapture();
                 if (app->state.view == View::Box) {
-                    const int dst = app->state.box_view.drag_over_tab;
-                    if (dst >= 0 && app->drag_from >= 0 &&
-                        box_move_item(app->state.boxes, app->state.box_view.box, app->drag_from,
-                                      dst)) {
+                    BoxState& bv = app->state.box_view;
+                    const int from = app->drag_from;
+                    const int dst = bv.drag_over_tab;
+                    if (dst >= 0 && from >= 0 &&
+                        box_move_item(app->state.boxes, bv.box, from, dst)) {
                         app->state.data_dirty = true;
-                        app->state.box_view.sel = -1;
+                        bv.sel = -1;
                         box_clamp(app->state, app->render.client_logical());
+                    } else if (dst < 0 && from >= 0) {
+                        // 拖到同一个盒子的另一个格子 = 换位置（跨盒在上面那条分支里）
+                        const D2D1_POINT_2F pt = app->render.to_logical(
+                            POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
+                        if (bv.box >= 0 && bv.box < static_cast<int>(app->state.boxes.size())) {
+                            const int cell = box_hittest(*app, pt);
+                            if (cell >= 0 && box_move_within(app->state.boxes[bv.box], from, cell)) {
+                                app->state.data_dirty = true;
+                                bv.sel = cell;  // 停在新位置：松手后回车就能打开它
+                            }
+                        }
                     }
                 }
                 app->state.box_view.drag_over_tab = -1;
@@ -940,7 +974,12 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_COMMAND:
-            // 启动板删掉后不再有“边打字边过滤”，WM_COMMAND 无需处理
+            // 筛选框输入即筛：EDIT 每改一次文字都发 EN_CHANGE 给父窗口，
+            // 列表就在这一条里跟着变（改名框/路径栏/待办输入框不需要逐键响应，
+            // 所以只认筛选框那个句柄）
+            if (app && HIWORD(wp) == EN_CHANGE && (HWND)lp == app->state.browse.filter_edit.hwnd) {
+                browse_filter_set(*app, app->state.browse.filter_edit.text());
+            }
             return 0;
         case WM_CONTEXTMENU: {
             if (!app) return 0;
@@ -967,8 +1006,14 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_CHAR: {
             // 在列表里打字就回到输入框继续记（列表本身不收文本）
             if (!app) return 0;
-            if (app->state.view != View::Todo) return 0;
             const wchar_t ch = static_cast<wchar_t>(wp);
+            // 收纳盒：输入即跳（Explorer 的输入定位）。条目是手挑的几十条，
+            // “跳过去”比“藏条目的筛选框”直接，也少一层会指错项的下标映射
+            if (app->state.view == View::Box) {
+                box_typeahead(*app, ch);
+                return 0;
+            }
+            if (app->state.view != View::Todo) return 0;
             TodoState& t = app->state.todo;
             if (ch >= 0x20 && ch != 0x7F) {
                 if (!t.input.is_open()) todo_sync_input(*app);
@@ -981,6 +1026,8 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_KEYDOWN: {
             if (!app) return 0;
             if (wp == VK_ESCAPE) {
+                // 有筛选时第一下 Esc 先清筛选（浏览视图自己的状态），第二下才收起面板
+                if (app->state.view == View::Browse && browse_clear_filter(*app)) return 0;
                 app_hide(*app);
                 return 0;
             }
@@ -1281,6 +1328,7 @@ void app_hide(App& app) {
     if (!app.panel) return;
     app.state.box_view.edit.close();  // 悬空的输入框比看不见的窗口更让人困惑
     app.state.browse.path_edit.close();
+    fs_watch_dir(L"");  // 隐藏时不盯目录：目录一变就重载是浪费，呼出时 browse_activate 会再接上
     todo_leave(app);         // 先把没提交的文字收下，否则它赶不上这次落盘
     app_save_if_dirty(app);  // 用户改完就切走很自然，落盘不能等退出
     ::ShowWindow(app.panel, SW_HIDE);

@@ -13,6 +13,17 @@ void sort_dir_entries(std::vector<DirEntry>& entries) {
     });
 }
 
+std::vector<DirEntry> filter_dir_entries(const std::vector<DirEntry>& entries,
+                                         const std::wstring& needle) {
+    if (needle.empty()) return entries;
+    std::vector<DirEntry> out;
+    out.reserve(entries.size());
+    for (const auto& e : entries) {
+        if (contains_ci(e.name, needle)) out.push_back(e);
+    }
+    return out;
+}
+
 std::wstring new_folder_name(const std::vector<std::wstring>& taken_names) {
     std::wstring base = L"新建文件夹";
     if (!name_taken(taken_names, base)) return base;

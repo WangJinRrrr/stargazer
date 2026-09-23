@@ -77,6 +77,16 @@ bool box_move_item(std::vector<Box>& boxes, int src_box, int index, int dst_box)
     return true;
 }
 
+bool box_move_within(Box& box, int from, int to) {
+    const int n = static_cast<int>(box.items.size());
+    // to 必须是真实存在的格子：空白格不是位置，不能把条目甩到列表尾部
+    if (from < 0 || from >= n || to < 0 || to >= n || from == to) return false;
+    BoxItem moved = box.items[from];
+    box.items.erase(box.items.begin() + from);
+    box.items.insert(box.items.begin() + to, std::move(moved));
+    return true;
+}
+
 bool box_name_taken(const std::vector<Box>& boxes, const std::wstring& name, int except_index) {
     if (name.empty()) return false;  // 空名不算被占用（改名本来就不接受空名）
     for (int i = 0; i < static_cast<int>(boxes.size()); ++i) {

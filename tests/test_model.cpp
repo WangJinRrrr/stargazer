@@ -259,6 +259,55 @@ static void test_box_move_item() {
     CHECK_EQ(boxes[1].items.size(), size_t{1});
 }
 
+// 盒内拖拽换位置：落点即最终下标，占着落点的那条与中间的一起朝反方向挪
+static void test_box_move_within() {
+    sg::Box box;
+    box.name = L"A";
+    for (int i = 1; i <= 4; ++i)
+        box.items.push_back({ L"n" + std::to_wstring(i), L"C:\\" + std::to_wstring(i) + L".txt" });
+
+    CHECK(sg::box_move_within(box, 0, 2));       // 往后拖：1 落到 2 号格
+    CHECK_EQ(box.items[2].name, std::wstring(L"n1"));  // 最终下标 == 落点
+    CHECK_EQ(box.items[0].name, std::wstring(L"n2"));  // 中间的朝前挪一格
+    CHECK_EQ(box.items[1].name, std::wstring(L"n3"));
+    CHECK_EQ(box.items[3].name, std::wstring(L"n4"));  // 落点之后的没被碰
+
+    CHECK(sg::box_move_within(box, 3, 0));       // 往前拖：n4 落到 0 号格
+    CHECK_EQ(box.items[0].name, std::wstring(L"n4"));
+    CHECK_EQ(box.items[1].name, std::wstring(L"n2"));
+    CHECK_EQ(box.items[2].name, std::wstring(L"n3"));
+    CHECK_EQ(box.items[3].name, std::wstring(L"n1"));
+    CHECK_EQ(box.items.size(), size_t{4});       // 只挪位置，不丢不重
+
+    // 原地 / 越界：不动。空白格（下标 >= size）不算位置，否则会把条目甩到尾部
+    CHECK(!sg::box_move_within(box, 0, 0));
+    CHECK(!sg::box_move_within(box, -1, 2));
+    CHECK(!sg::box_move_within(box, 2, 4));
+    CHECK_EQ(box.items[0].name, std::wstring(L"n4"));
+}
+
+// 筛选：只留下名字含着筛选词的项，且不动顺序（目录在前的分组也原样保留）
+static void test_filter_dir_entries() {
+    std::vector<sg::DirEntry> all{
+        { L"Docs", true },  { L"readme.txt", false }, { L"Report.PDF", false },
+        { L"img10.png", false }, { L"img2.png", false },
+    };
+
+    CHECK_EQ(sg::filter_dir_entries(all, L"").size(), all.size());  // 空词 = 原样
+
+    const auto rep = sg::filter_dir_entries(all, L"rep");           // 大小写不敏感
+    CHECK_EQ(rep.size(), size_t{1});
+    CHECK_EQ(rep[0].name, std::wstring(L"Report.PDF"));
+
+    const auto img = sg::filter_dir_entries(all, L"img");            // 顺序不变
+    CHECK_EQ(img.size(), size_t{2});
+    CHECK_EQ(img[0].name, std::wstring(L"img10.png"));
+    CHECK_EQ(img[1].name, std::wstring(L"img2.png"));
+
+    CHECK_EQ(sg::filter_dir_entries(all, L"zzz").size(), size_t{0});
+    CHECK_EQ(sg::filter_dir_entries(all, L"docs")[0].is_dir, true);  // 目录不会被筛掉
+}
+
 // 改名不能造出重名盒子 —— parse_boxes 对同名盒子是“合并”，
 // 允许重名会在下次启动时静默把两个盒子并成一个（组织关系丢了）。
 static void test_box_name_taken() {
@@ -505,6 +554,8 @@ int main() {
     test_boxes_ghost_lines();
     test_box_add_paths();
     test_box_move_item();
+    test_box_move_within();
+    test_filter_dir_entries();
     test_box_name_taken();
     test_dirlist_sort_and_names();
     test_parent_path();

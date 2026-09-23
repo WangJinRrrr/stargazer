@@ -24,6 +24,10 @@ struct BoxState {
     int tab_hover = -1;      // 悬停的盒子标签（分段控件的 hover 状态）
     int scroll = 0;         // 起始行
     int drag_over_tab = -1;  // 内部拖拽时高亮的目标盒子标签
+    // 输入即跳（Explorer 的 type-ahead）：连打的字符与时间戳。
+    // 盒子条目是手挑的几十条，跳过去比“藏条目的筛选框”直接，也不用多一层下标映射。
+    std::wstring typeahead;
+    unsigned long long typeahead_ms = 0;
     // 重命名输入框。原来借用启动板的搜索框（全程序只有一个 EDIT 实例），
     // 启动板删掉后盒子自己持有一个。
     InlineEdit edit;
@@ -32,7 +36,12 @@ struct BoxState {
 // 浏览视图状态（本地目录 / 网盘目录）。列表是异步枚举出来的，所以带 requestId。
 struct BrowseState {
     std::wstring path;               // 当前目录（空 = 还没设置过根目录）
-    std::vector<FsEntry> entries;    // 当前列表（已排序：目录在前 + 自然序）
+    std::vector<FsEntry> entries;    // 当前**显示**的列表（已排序：目录在前 + 自然序）
+    // 筛选：entries 始终是“看得见的那份”，all 只在筛选生效期间存全量
+    // （未筛选时 all 是空的）。这样 open/rename/delete 那些直接吃下标的地方
+    // 一行都不用改 —— 下标直通，就不可能指到被筛掉的项上去。
+    std::vector<FsEntry> all;
+    std::wstring filter;             // 筛选词（空 = 不筛）
     std::wstring error;              // 非空 = 枚举失败（列表区显示错误行 + F5）
     std::wstring note;               // 最近一次操作的提示（如“跳过 2 个同名文件”）
     int sel = -1;
@@ -45,6 +54,8 @@ struct BrowseState {
     bool loading = false;
     // 路径栏的输入框：默认只画文本，点路径栏或 Ctrl+L 才打开它（避免跟列表抢键盘）
     InlineEdit path_edit;
+    // 筛选框（路径栏同一行的右端）：输入即筛
+    InlineEdit filter_edit;
 };
 
 // 待办视图状态。列表是不等高行（文字 28 / 图片 96），offsets 是行偏移前缀和，

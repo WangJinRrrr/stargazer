@@ -47,6 +47,12 @@ size_t box_add_paths(std::vector<Box>& boxes, int box_index,
 // 越界、同盒、空列表一律不动并返回 false，调用方不必先自查。
 bool box_move_item(std::vector<Box>& boxes, int src_box, int index, int dst_box);
 
+// 盒内换位置（拖到另一个格子）：条目最终落在原列表的 to 下标处，
+// 原本占着 to 的条目（以及中间的）整体朝 from 方向挪一格 —— 语义是
+// “落在哪个格子就住哪个格子”，与拖到标签换盒是同一套心智。
+// 越界、from == to 一律不动并返回 false。
+bool box_move_within(Box& box, int from, int to);
+
 // 盒子名是否已被**别的**盒子占用（except_index 是要改名的那一个）。
 // 改名必须用它拦重名：同名盒子在 parse 时会被合并，等于静默丢一个盒子的组织结构。
 bool box_name_taken(const std::vector<Box>& boxes, const std::wstring& name, int except_index);

@@ -10,6 +10,7 @@
 #include "clipboard.h"
 #include "dragdrop.h"  // box_move_item 不需要，但 make_hdrop 由 clipboard 使用
 #include "fs_work.h"
+#include "model/search.h"  // contains_ci（输入即跳）
 
 namespace sg {
 
@@ -440,6 +441,48 @@ void box_context_menu(App& app, POINT screen_pt, POINT client_pt) {
         default:
             break;
     }
+    ::InvalidateRect(app.panel, nullptr, FALSE);
+}
+
+void box_typeahead(App& app, wchar_t ch) {
+    AppState& s = app.state;
+    BoxState& bs = s.box_view;
+    if (s.boxes.empty() || bs.box < 0 || bs.box >= static_cast<int>(s.boxes.size())) return;
+    const auto& items = s.boxes[bs.box].items;
+    const int n = static_cast<int>(items.size());
+    if (n == 0) return;
+
+    // 隔一会儿再打就算新的一次输入（否则上次的字母会一直粘着）
+    const ULONGLONG now = ::GetTickCount64();
+    if (now - bs.typeahead_ms > 1000) bs.typeahead.clear();
+    bs.typeahead_ms = now;
+    if (ch == L'\b') {
+        if (!bs.typeahead.empty()) bs.typeahead.pop_back();
+    } else if (ch >= 0x20 && ch != 0x7F) {
+        bs.typeahead.push_back(ch);
+    } else {
+        return;  // 控制字符（Ctrl+某键等）不当输入
+    }
+    if (bs.typeahead.empty()) return;
+
+    // 当前项已经匹配时从它的下一项开始找：连敲同一个字母能在多个匹配之间轮转
+    const int start =
+        (bs.sel >= 0 && bs.sel < n && contains_ci(items[bs.sel].name, bs.typeahead)) ? bs.sel + 1
+                                                                                    : 0;
+    for (int k = 0; k < n; ++k) {
+        const int i = (start + k) % n;
+        if (contains_ci(items[static_cast<size_t>(i)].name, bs.typeahead)) {
+            bs.sel = i;
+            break;
+        }
+    }
+
+    // 跳过去的那一项得看得见（网格按行滚）
+    const GridLayout gl = box_layout(app.render.client_logical());
+    const int row = bs.sel / gl.cols;
+    if (row < bs.scroll) bs.scroll = row;
+    if (row >= bs.scroll + gl.rows_visible) bs.scroll = row - gl.rows_visible + 1;
+    box_clamp(s, app.render.client_logical());
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 

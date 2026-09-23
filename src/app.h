@@ -34,6 +34,8 @@ constexpr UINT WM_APP_DIR_LOADED = WM_APP + 5;
 constexpr UINT WM_APP_FS_OP_DONE = WM_APP + 6;
 // 缩略图工作线程取到一张图（待办图片预览）
 constexpr UINT WM_APP_IMAGE_READY = WM_APP + 7;
+// 被监视的目录发生了外部改动（浏览视图自动刷新）
+constexpr UINT WM_APP_DIR_CHANGED = WM_APP + 8;
 
 struct App {
     HINSTANCE inst = nullptr;

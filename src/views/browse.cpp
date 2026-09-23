@@ -25,21 +25,43 @@ std::wstring entry_path(const AppState& s, int index) {
 }
 
 // 当前列表里已占用的名字（新建/改名时防撞名）
+// 筛选期间**被筛掉的名字也算占用**：只看 entries 就会造出重名
+// （重名的那一项被筛选器盖着，用户看不见却真实存在）
 std::vector<std::wstring> taken_names(const AppState& s) {
     std::vector<std::wstring> out;
-    out.reserve(s.browse.entries.size());
+    out.reserve(s.browse.entries.size() + s.browse.all.size());
     for (const auto& e : s.browse.entries) out.push_back(e.name);
+    for (const auto& e : s.browse.all) out.push_back(e.name);
     return out;
 }
 
-// “正在读取 / 错误 / 提示”那一行的高度（没内容时为 0）
+// “正在读取 / 错误 / 提示”那一行的高度（没内容时为 0）。
+// 筛选生效时也要让出这一行 —— 那行会显示“筛了多少条 / 怎么清掉”
 float browse_note_h(const BrowseState& b) {
-    return (b.error.empty() && b.note.empty() && !b.loading) ? 0.f : 20.f;
+    return (b.error.empty() && b.note.empty() && !b.loading && b.filter.empty()) ? 0.f : 20.f;
+}
+
+// 按名字找回选中项：列表一变（筛选、自动刷新）保留下标就会指到另一个文件，
+// 那意味着回车/删除动的是错的那一项
+void restore_sel(BrowseState& b, const std::wstring& name) {
+    b.sel = -1;
+    if (name.empty()) return;
+    for (size_t i = 0; i < b.entries.size(); ++i) {
+        if (equals_ci(b.entries[i].name, name)) {
+            b.sel = static_cast<int>(i);
+            break;
+        }
+    }
 }
 
 // 常驻路径栏的内框：EDIT 子控件要缩进来，否则它那块方底会盖掉圆角与描边
 D2D1_RECT_F browse_path_inner_rect(D2D1_SIZE_F client) {
     const D2D1_RECT_F bar = browse_path_rect(client);
+    return D2D1::RectF(bar.left + 6.f, bar.top + 4.f, bar.right - 6.f, bar.bottom - 4.f);
+}
+
+D2D1_RECT_F browse_filter_inner_rect(D2D1_SIZE_F client) {
+    const D2D1_RECT_F bar = browse_filter_rect(client);
     return D2D1::RectF(bar.left + 6.f, bar.top + 4.f, bar.right - 6.f, bar.bottom - 4.f);
 }
 
@@ -64,8 +86,16 @@ void set_note(App& app, const std::wstring& text) {
 
 }  // namespace
 
+D2D1_RECT_F browse_filter_rect(D2D1_SIZE_F client) {
+    // 窗口窄的时候按比例收窄，宁可筛选框小一点也别把路径栏挤没
+    const float avail = client.width - kPad * 2.f;
+    const float w = std::min(kBrowseFilterW, std::max(120.f, avail * 0.4f));
+    return D2D1::RectF(client.width - kPad - w, kViewTabsH + kPad, client.width - kPad,
+                       kViewTabsH + kPad + kBrowseBarH);
+}
+
 D2D1_RECT_F browse_path_rect(D2D1_SIZE_F client) {
-    return D2D1::RectF(kPad, kViewTabsH + kPad, client.width - kPad,
+    return D2D1::RectF(kPad, kViewTabsH + kPad, browse_filter_rect(client).left - kGap,
                        kViewTabsH + kPad + kBrowseBarH);
 }
 
@@ -117,6 +147,7 @@ void browse_refresh(App& app) {
     ++b.request_id;  // 旧结果回来时 id 不匹配，会被丢弃
     b.loading = true;
     fs_list_dir(b.path, b.request_id);
+    fs_watch_dir(b.path);  // 目录被外部改动时自动重载；路径没变时它自己会跳过
 }
 
 void browse_go(App& app, const std::wstring& path) {
@@ -202,6 +233,85 @@ void browse_sync_path_edit(App& app) {
     if (b.path_edit.is_open()) b.path_edit.set_text(b.path);
 }
 
+// 筛选：换一份**显示列表**，而不是插一层下标映射。
+// 下标直通让 open/rename/delete 这些直接吃下标的地方不必改也不必担心漏改，
+// 代价只是筛选期间多存一份全量（未筛选时 all 是空的，常见情况不占内存）。
+void browse_filter_set(App& app, const std::wstring& text) {
+    AppState& s = app.state;
+    BrowseState& b = s.browse;
+    if (b.filter == text) return;
+
+    // 选中项必须在下边换列表之前按名字记下：b.sel 指的是**筛完后**的下标，
+    // 列表一换它就指向别的文件了（那就等于回车/删除动错项）
+    std::wstring keep;
+    if (b.sel >= 0 && b.sel < static_cast<int>(b.entries.size())) {
+        keep = b.entries[static_cast<size_t>(b.sel)].name;
+    }
+
+    const bool was = !b.filter.empty();
+    const bool now = !text.empty();
+    if (!was && now) {
+        b.all = std::move(b.entries);  // 开始筛：全量搬进 all（move，不拷贝）
+        b.entries.clear();
+    } else if (was && !now) {
+        b.entries = std::move(b.all);  // 清空筛选：全量搬回显示列表
+        b.all = std::vector<FsEntry>();  // 真正还回内存（clear 不释放容量）
+    }
+    b.filter = text;
+
+    // 只有筛选还在生效时才从全量重建显示列表。
+    // 清空筛选那条分支里 all 已经空了，再无条件重建就会把列表抹成空的
+    // （真正的 bug，挖出来时就是这个形状）
+    if (!b.filter.empty()) {
+        b.entries = filter_dir_entries(b.all, b.filter);
+    }
+    restore_sel(b, keep);
+    clamp_browse(s, app.render.client_logical());
+    ::InvalidateRect(app.panel, nullptr, FALSE);
+}
+
+bool browse_clear_filter(App& app) {
+    if (app.state.browse.filter.empty()) return false;
+    browse_filter_set(app, L"");
+    app.state.browse.filter_edit.close();  // 点钩上后把输入框也收掉
+    return true;
+}
+
+void browse_edit_filter(App& app) {
+    AppState& s = app.state;
+    BrowseState& b = s.browse;
+    const RECT rc = app.render.to_physical(browse_filter_inner_rect(app.render.client_logical()));
+    b.filter_edit.open(
+        app.panel, rc, b.filter, app.render.dpi,
+        [&app](const std::wstring& t) {
+            browse_filter_set(app, t);
+            ::SetFocus(app.panel);  // 回车后键盘交给列表，直接 ↓ / Enter 就能用
+            ::InvalidateRect(app.panel, nullptr, FALSE);
+        },
+        [&app]() {
+            browse_filter_set(app, L"");  // Esc：清空筛选（面板藏不藏由 app 层决定）
+            ::InvalidateRect(app.panel, nullptr, FALSE);
+        });
+    b.filter_edit.on_key = [&app](UINT vk) {  // ↓ 回列表，不占着键盘
+        if (vk != VK_DOWN && vk != VK_UP) return false;
+        ::SetFocus(app.panel);
+        ::InvalidateRect(app.panel, nullptr, FALSE);
+        return true;
+    };
+    ::InvalidateRect(app.panel, nullptr, FALSE);
+}
+
+void browse_sync_edit_rects(App& app) {
+    BrowseState& b = app.state.browse;
+    const D2D1_SIZE_F client = app.render.client_logical();
+    if (b.path_edit.is_open()) {
+        b.path_edit.set_rect(app.render.to_physical(browse_path_inner_rect(client)));
+    }
+    if (b.filter_edit.is_open()) {
+        b.filter_edit.set_rect(app.render.to_physical(browse_filter_inner_rect(client)));
+    }
+}
+
 void browse_activate(App& app) {
     AppState& s = app.state;
     BrowseState& b = s.browse;
@@ -222,7 +332,11 @@ void browse_activate(App& app) {
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
-void browse_leave(App& app) { app.state.browse.path_edit.close(); }
+void browse_leave(App& app) {
+    app.state.browse.path_edit.close();
+    app.state.browse.filter_edit.close();  // 筛选词留着，输框收掉（回来还在）
+    fs_watch_dir(L"");  // 离开视图就别再盯着目录了（网盘目录白耗 CPU）
+}
 
 void browse_on_dir_loaded(App& app) {
     AppState& s = app.state;
@@ -232,11 +346,33 @@ void browse_on_dir_loaded(App& app) {
     std::vector<FsEntry> entries;
     if (!fs_take_dir(b.request_id, dir, entries, error)) return;  // 过期结果：丢弃
     if (dir != b.path) return;                                    // 双保险
-    b.entries = std::move(entries);
+    // 选中项按名字重新找回来：自动刷新时列表会变，保留下标会让回车打开错的那个
+    std::wstring sel_name;
+    if (b.sel >= 0 && b.sel < static_cast<int>(b.entries.size())) {
+        sel_name = b.entries[static_cast<size_t>(b.sel)].name;
+    }
+    if (b.filter.empty()) {
+        b.entries = std::move(entries);  // 不筛选：entries 就是全量，不额外存一份
+    } else {
+        b.all = std::move(entries);      // 筛选着：全量归 all，显示列表等下面重建
+    }
     b.error = error;
     b.loading = false;
+    if (b.filter.empty()) {
+        restore_sel(b, sel_name);
+    } else {
+        b.entries = filter_dir_entries(b.all, b.filter);
+        restore_sel(b, sel_name);
+    }
     clamp_browse(s, app.render.client_logical());
     ::InvalidateRect(app.panel, nullptr, FALSE);
+}
+
+void browse_on_dir_changed(App& app) {
+    BrowseState& b = app.state.browse;
+    if (b.path.empty()) return;
+    ++b.request_id;  // 这次请求的 id；旧结果自动作废
+    fs_list_dir(b.path, b.request_id);
 }
 
 void browse_on_op_done(App& app) {
@@ -425,6 +561,10 @@ bool browse_keydown(App& app, UINT vk) {
         browse_edit_path(app);
         return true;
     }
+    if (ctrl && vk == L'F') {
+        browse_edit_filter(app);
+        return true;
+    }
     if (ctrl && vk == L'C') {
         browse_copy_selected(app);
         return true;
@@ -572,12 +712,30 @@ void browse_render(App& app) {
                r.format(14.f), b.path.empty() ? r.theme.text_faint : r.theme.text);
     }
 
+    // 筛选框：与路径栏同一行（右侧），输入即筛；未输入时是占位文字
+    const D2D1_RECT_F fbar = browse_filter_rect(client);
+    r.fill_round_rect(fbar, kRadiusSm, r.theme.control);
+    r.stroke_round_rect(fbar, kRadiusSm, r.theme.border, 1.f);
+    if (!b.filter_edit.is_open()) {
+        const D2D1_RECT_F fin = browse_filter_inner_rect(client);
+        r.text(D2D1::RectF(fin.left + 10.f, fbar.top, fin.right, fbar.bottom),
+               b.filter.empty() ? L"筛选 Ctrl+F" : b.filter, r.format(14.f),
+               b.filter.empty() ? r.theme.text_faint : r.theme.text);
+    }
+
     // 提示行 / 错误行（列表上沿由 browse_list_rect 让出这一行的高度）
     const D2D1_RECT_F list = browse_list_rect(s, client);
-    if (!b.error.empty() || !b.note.empty() || b.loading) {
-        const std::wstring line = !b.error.empty()
-                                      ? (L"无法访问：" + b.error + L"（F5 重试）")
-                                      : (b.loading ? L"正在读取…" : b.note);
+    // 筛选时把“筛了多少 / 怎么清掉”写在这一行，不然用户只能猜为什么面板里少东西
+    const std::wstring filter_line =
+        b.filter.empty() ? std::wstring()
+                         : L"筛选 “" + b.filter + L"”：共 " +
+                               std::to_wstring(b.entries.size()) + L"/" +
+                               std::to_wstring(b.all.size()) + L" 项（Esc 清空）";
+    if (!b.error.empty() || !b.note.empty() || b.loading || !b.filter.empty()) {
+        const std::wstring line =
+            !b.error.empty() ? (L"无法访问：" + b.error + L"（F5 重试）")
+                             : (b.loading ? L"正在读取…"
+                                          : (!b.note.empty() ? b.note : filter_line));
         const D2D1_COLOR_F color = b.error.empty() ? r.theme.text_dim : r.theme.danger;
         r.text(D2D1::RectF(kPad, bar.bottom + 2.f, client.width - kPad,
                            bar.bottom + 2.f + browse_note_h(b)),
@@ -586,7 +744,9 @@ void browse_render(App& app) {
 
     // 列表
     if (b.entries.empty() && b.error.empty() && !b.loading) {
-        r.text(D2D1::RectF(kPad, list.top, client.width - kPad, list.top + 24.f), L"（空目录）",
+        r.text(D2D1::RectF(kPad, list.top, client.width - kPad, list.top + 24.f),
+               b.filter.empty() ? L"（空目录）"
+                                : (L"（没有名字含 “" + b.filter + L"” 的项）"),
                r.format(14.f), r.theme.text_faint);
         return;
     }

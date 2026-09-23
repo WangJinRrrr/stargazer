@@ -17,6 +17,10 @@ struct App;
 constexpr float kBrowseRowH = 32.f;   // 列表行高（Win11 标准控件高）
 constexpr float kBrowseBarH = 32.f;   // 路径栏高度
 constexpr float kBrowseIcon = 20.f;   // 行内图标边长
+constexpr float kBrowseFilterW = 200.f;  // 筛选框宽度（与路径栏同一行，省一行高度）
+
+// 筛选框矩形（路径栏右端）
+D2D1_RECT_F browse_filter_rect(D2D1_SIZE_F client);
 
 // 路径栏 / 列表区矩形（列表上沿要把“正在读取/错误/提示”那一行让出来，
 // 否则提示文字会压在第一条上 —— 命中与渲染共用这一个上沿）
@@ -61,9 +65,19 @@ void browse_add_to_box(App& app);           // 添加到当前收纳盒
 // 路径栏输入框开关（点路径栏或 Ctrl+L 打开；回车跳转）
 void browse_edit_path(App& app);
 void browse_sync_path_edit(App& app);
+// 筛选框：点它或 Ctrl+F 打开，输入即筛（ENT_CHANGE），Esc 清空
+void browse_edit_filter(App& app);
+void browse_filter_set(App& app, const std::wstring& text);
+// Esc 的第一优先级：有筛选就先清筛选（返回 true = 已消费这次 Esc，面板先不隐藏）
+bool browse_clear_filter(App& app);
+// 窗口缩放时把两个常驻输入框挪到新的位置（它们不会自己跟着窗口走）
+void browse_sync_edit_rects(App& app);
 
 // 工作线程完成通知（由 app 层在 WM_APP_DIR_LOADED / WM_APP_FS_OP_DONE 里调用）
 void browse_on_dir_loaded(App& app);
 void browse_on_op_done(App& app);
+// 当前目录被外部改动（WM_APP_DIR_CHANGED）：重载列表。
+// 与 browse_refresh 的区别是不亮“正在读取”那一行：自动刷新不该让列表跳一下
+void browse_on_dir_changed(App& app);
 
 }  // namespace sg

@@ -34,6 +34,10 @@ void fs_drain();
 
 // --- 目录枚举（浏览视图用）---
 void fs_list_dir(const std::wstring& dir, uint64_t request_id);
+// 目录监视（浏览视图用）：切换当前监视的目录，dir 为空则停止监视。
+// 目录被外部改动时会向 notify 窗口 PostMessage(WM_APP_DIR_CHANGED)。
+// 只在 UI 线程调用（内部会起/停一条监视线程）。
+void fs_watch_dir(const std::wstring& dir);
 // UI 线程：取回一次枚举结果。request_id 不匹配（过期）时返回 false，并丢弃该结果。
 bool fs_take_dir(uint64_t request_id, std::wstring& dir, std::vector<FsEntry>& entries,
                  std::wstring& error);
