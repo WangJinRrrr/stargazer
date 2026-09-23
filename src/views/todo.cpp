@@ -66,53 +66,40 @@ void reselect_by_id(AppState& s, long long id) {
     }
 }
 
-// 文本宽度（给链接下划线用）。取不到就返回 0，不影响其它绘制。
-float text_width(Renderer& r, const std::wstring& s, IDWriteTextFormat* fmt, float max_w) {
-    if (!r.dwrite || !fmt || s.empty()) return 0.f;
-    IDWriteTextLayout* layout = nullptr;
-    if (FAILED(r.dwrite->CreateTextLayout(s.c_str(), static_cast<UINT32>(s.size()), fmt, max_w,
-                                          1000.f, &layout)) ||
-        !layout) {
-        return 0.f;
-    }
-    DWRITE_TEXT_METRICS m{};
-    layout->GetMetrics(&m);
-    layout->Release();
-    return m.width;
-}
-
-// 一条列表项；row 是它的整行矩形（文字 28、图片 96）
+// 一条列表项；row 是它的整行矩形（文字 32 / 多行 40 / 图片 96）
 void draw_row(App& app, int index, const D2D1_RECT_F& row) {
     Renderer& r = app.render;
     const TodoItem& item = app.state.todos[static_cast<size_t>(index)];
     const bool selected = index == app.state.todo.sel;
 
+    // Win11 列表行：悬停 = 极淡填充；选中 = 强调色低透明底 + 强调色描边
     if (selected) {
-        r.fill_round_rect(row, 4.f, r.theme.accent);
+        r.fill_round_rect(row, kRadiusSm, r.theme.sel_fill);
+        r.stroke_round_rect(row, kRadiusSm, r.theme.sel_stroke, 1.f);
     } else if (index == app.state.todo.hover) {
-        r.fill_round_rect(row, 4.f, r.theme.hover);
+        r.fill_round_rect(row, kRadiusSm, r.theme.hover);
     }
 
-    const D2D1_COLOR_F normal = selected ? D2D1::ColorF(1.f, 1.f, 1.f) : r.theme.text;
-    const D2D1_COLOR_F text_color = item.done ? r.theme.text_dim : normal;
+    const D2D1_COLOR_F text_color = item.done ? r.theme.text_faint : r.theme.text;
 
-    // 左侧复选框（16×16）。图片行的复选框对齐缩略图顶部，其余垂直居中。
-    const float cb = 16.f;
+    // 左侧复选框（20×20，Win11 尺寸）。图片行的复选框对齐缩略图顶部，其余垂直居中。
+    const float cb = 20.f;
     const float cy = (item.kind == TodoKind::Image)
                          ? row.top + 8.f
                          : row.top + (todo_row_height(item) - cb) / 2.f;
-    const D2D1_RECT_F box =
-        D2D1::RectF(row.left + 6.f, cy, row.left + 6.f + cb, cy + cb);
+    const D2D1_RECT_F box = D2D1::RectF(row.left + 6.f, cy, row.left + 6.f + cb, cy + cb);
     if (item.done) {
-        r.fill_round_rect(box, 4.f, r.theme.text_dim);
-        // 勾：两段短线拼出来，不引入字体符号
-        r.fill_rect(D2D1::RectF(box.left + 3.f, box.top + 8.f, box.left + 7.f, box.top + 12.f),
-                    r.theme.bg);
-        r.fill_rect(D2D1::RectF(box.left + 7.f, box.top + 4.f, box.left + 13.f, box.top + 8.f),
-                    r.theme.bg);
+        r.fill_round_rect(box, 5.f, r.theme.accent);
+        // 勾：两段短线拼出来（不引入字体符号）；强调色是亮色，勾用 on_accent 的深色
+        r.fill_rect(
+            D2D1::RectF(box.left + 4.f, box.top + 10.f, box.left + 9.f, box.top + 15.f),
+            r.theme.on_accent);
+        r.fill_rect(
+            D2D1::RectF(box.left + 9.f, box.top + 5.f, box.left + 16.f, box.top + 11.f),
+            r.theme.on_accent);
     } else {
-        r.stroke_round_rect(box, 4.f, selected ? D2D1::ColorF(1.f, 1.f, 1.f) : r.theme.border,
-                            1.5f);
+        r.stroke_round_rect(box, 5.f,
+                            selected ? r.theme.text : r.theme.stroke_strong, 1.f);
     }
 
     const float content_x = box.right + 10.f;
@@ -135,37 +122,44 @@ void draw_row(App& app, int index, const D2D1_RECT_F& row) {
                                  D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
             }
         } else {
-            r.fill_round_rect(thumb, 8.f, ext_color(item.attach));
+            r.fill_round_rect(thumb, kRadiusMd, ext_color(item.attach));
         }
         // 名字画在缩略图**右侧**：图片行只有 96 高，88 高的缩略图加留白已没地方再放一行字
         const std::wstring label = item.text.empty() ? file_name(item.attach) : item.text;
         const D2D1_RECT_F name =
-            D2D1::RectF(thumb.right + 10.f, row.top + 6.f, row.right - 6.f, row.top + 28.f);
-        r.text(name, label, r.format(11.f), item.missing ? r.theme.text_dim : text_color);
+            D2D1::RectF(thumb.right + 10.f, row.top + 6.f, row.right - 6.f, row.top + 30.f);
+        r.text(name, label, r.format(12.f), item.missing ? r.theme.text_faint : text_color);
         if (item.missing) {
             // 引用型图片被外部改名/删除：灰显 + 删除线 + 说明
             const float mid = (name.top + name.bottom) / 2.f;
             r.fill_rect(D2D1::RectF(name.left, mid - 0.5f, name.right, mid + 0.5f),
-                        r.theme.text_dim);
-            r.text(D2D1::RectF(thumb.right + 10.f, row.top + 30.f, row.right - 6.f, row.top + 52.f),
-                   L"图片已不存在", r.format(11.f), r.theme.text_dim);
+                        r.theme.text_faint);
+            r.text(D2D1::RectF(thumb.right + 10.f, row.top + 34.f, row.right - 6.f, row.top + 56.f),
+                   L"图片已不存在", r.format(12.f), r.theme.text_faint);
         }
     } else if (item.kind == TodoKind::Link) {
-        // 链接：强调色 + 下划线（选中时用白字，否则强调色在强调色底上看不见）
-        const D2D1_COLOR_F link_color =
-            item.done ? r.theme.text_dim : (selected ? D2D1::ColorF(1.f, 1.f, 1.f) : r.theme.accent);
-        r.text(lab, item.text, r.format(13.f), link_color);
-        const float w = std::min(text_width(r, item.text, r.format(13.f), content_w), content_w);
+        // 链接：强调色 + 下划线（Win11 的可点击文本色）
+        IDWriteTextFormat* fmt = r.format(14.f);
+        const D2D1_COLOR_F link_color = item.done ? r.theme.text_faint : r.theme.accent;
+        r.text(lab, item.text, fmt, link_color);
+        const float w = std::min(r.measure_text(item.text, fmt).width, content_w);
         if (w > 4.f) {
-            const float uy = row.top + todo_row_height(item) - 8.f;
+            const float uy = row.top + todo_row_height(item) - 9.f;
             r.fill_rect(D2D1::RectF(content_x, uy, content_x + w, uy + 1.f), link_color);
         }
     } else {
-        r.text(lab, item.text, r.format(13.f), text_color);
+        r.text(lab, item.text, r.format(14.f), text_color);
     }
 }
 
 }  // namespace
+
+// 常驻输入框的内框：EDIT 子控件要缩进来，否则它那块方底会盖掉容器的圆角与描边。
+// 渲染（占位提示）与 EDIT 定位都用它，两边不会错位。
+static D2D1_RECT_F todo_input_inner_rect(D2D1_SIZE_F client) {
+    const D2D1_RECT_F in = todo_input_rect(client);
+    return D2D1::RectF(in.left + 6.f, in.top + 4.f, in.right - 6.f, in.bottom - 4.f);
+}
 
 D2D1_RECT_F todo_input_rect(D2D1_SIZE_F client) {
     return D2D1::RectF(kPad, client.height - kPad - kTodoInputH, client.width - kPad,
@@ -230,8 +224,8 @@ void todo_render(App& app) {
 
     if (n == 0) {
         r.text(D2D1::RectF(list.left, list.top, list.right, list.top + 24.f),
-               L"还没有记录：在下面输入，或 Ctrl+V 粘文字 / 链接 / 截图", r.format(13.f),
-               r.theme.text_dim);
+               L"还没有记录：在下面输入，或 Ctrl+V 粘文字 / 链接 / 截图", r.format(14.f),
+               r.theme.text_faint);
     } else {
         // 虚拟化：从 scroll 位置对应的第一行画到超出列表底部为止
         int first = todo_row_at(t.offsets, t.scroll);
@@ -244,12 +238,15 @@ void todo_render(App& app) {
         }
     }
 
-    // 底部输入框：文字由 EDIT 子控件自己画，这里只画底与占位提示
+    // 底部常驻输入框：Win11 的文本框（控件底 + 1px 描边 + 4 圆角）。
+    // 文字由 EDIT 子控件自己画，这里只画容器与占位提示。
     const D2D1_RECT_F in = todo_input_rect(client);
-    r.fill_round_rect(in, 6.f, r.theme.card);
+    r.fill_round_rect(in, kRadiusSm, r.theme.control);
+    r.stroke_round_rect(in, kRadiusSm, r.theme.border, 1.f);
     if (!t.input.is_open()) {
-        r.text(D2D1::RectF(in.left + 10.f, in.top, in.right - 10.f, in.bottom), L"记一条…",
-               r.format(13.f), r.theme.text_dim);
+        const D2D1_RECT_F inner = todo_input_inner_rect(client);
+        r.text(D2D1::RectF(inner.left + 10.f, in.top, inner.right, in.bottom), L"记一条…",
+               r.format(14.f), r.theme.text_faint);
     }
 }
 
@@ -325,7 +322,7 @@ bool todo_keydown(App& app, UINT vk) {
 
 void todo_sync_input(App& app) {
     TodoState& t = app.state.todo;
-    const RECT rc = app.render.to_physical(todo_input_rect(app.render.client_logical()));
+    const RECT rc = app.render.to_physical(todo_input_inner_rect(app.render.client_logical()));
     t.input.multiline = true;  // 多行粘贴要原样收下（回车仍然由子类拦下来当“提交”）
     if (t.input.is_open()) {
         t.input.set_rect(rc);

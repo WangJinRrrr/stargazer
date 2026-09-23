@@ -32,12 +32,23 @@ std::vector<std::wstring> taken_names(const AppState& s) {
     return out;
 }
 
+// “正在读取 / 错误 / 提示”那一行的高度（没内容时为 0）
+float browse_note_h(const BrowseState& b) {
+    return (b.error.empty() && b.note.empty() && !b.loading) ? 0.f : 20.f;
+}
+
+// 常驻路径栏的内框：EDIT 子控件要缩进来，否则它那块方底会盖掉圆角与描边
+D2D1_RECT_F browse_path_inner_rect(D2D1_SIZE_F client) {
+    const D2D1_RECT_F bar = browse_path_rect(client);
+    return D2D1::RectF(bar.left + 6.f, bar.top + 4.f, bar.right - 6.f, bar.bottom - 4.f);
+}
+
 void clamp_browse(AppState& s, D2D1_SIZE_F client) {
     BrowseState& b = s.browse;
     const int count = static_cast<int>(b.entries.size());
     if (b.sel >= count) b.sel = count > 0 ? count - 1 : -1;
     if (b.sel < -1) b.sel = -1;
-    const int rows = browse_rows_visible(client);
+    const int rows = browse_rows_visible(s, client);
     const int max_scroll = std::max(0, count - rows);
     b.scroll = std::clamp(b.scroll, 0, max_scroll);
     if (b.sel >= 0) {
@@ -58,22 +69,22 @@ D2D1_RECT_F browse_path_rect(D2D1_SIZE_F client) {
                        kViewTabsH + kPad + kBrowseBarH);
 }
 
-D2D1_RECT_F browse_list_rect(D2D1_SIZE_F client) {
-    const float top = browse_path_rect(client).bottom + kPad;
+D2D1_RECT_F browse_list_rect(const AppState& s, D2D1_SIZE_F client) {
+    const float top = browse_path_rect(client).bottom + kPad + browse_note_h(s.browse);
     return D2D1::RectF(kPad, top, client.width - kPad, client.height - kPad);
 }
 
-int browse_rows_visible(D2D1_SIZE_F client) {
-    const D2D1_RECT_F list = browse_list_rect(client);
+int browse_rows_visible(const AppState& s, D2D1_SIZE_F client) {
+    const D2D1_RECT_F list = browse_list_rect(s, client);
     const int rows = static_cast<int>((list.bottom - list.top) / kBrowseRowH);
     return std::max(1, rows);
 }
 
 int browse_row_hittest(const AppState& s, D2D1_SIZE_F client, D2D1_POINT_2F pt) {
-    const D2D1_RECT_F list = browse_list_rect(client);
+    const D2D1_RECT_F list = browse_list_rect(s, client);
     if (pt.x < list.left || pt.x > list.right || pt.y < list.top || pt.y > list.bottom) return -1;
     const int row = static_cast<int>((pt.y - list.top) / kBrowseRowH);
-    if (row < 0 || row >= browse_rows_visible(client)) return -1;
+    if (row < 0 || row >= browse_rows_visible(s, client)) return -1;
     const int idx = row + s.browse.scroll;
     if (idx < 0 || idx >= static_cast<int>(s.browse.entries.size())) return -1;
     return idx;
@@ -157,7 +168,7 @@ void browse_forward(App& app) {
 void browse_edit_path(App& app) {
     AppState& s = app.state;
     BrowseState& b = s.browse;
-    const RECT rc = app.render.to_physical(browse_path_rect(app.render.client_logical()));
+    const RECT rc = app.render.to_physical(browse_path_inner_rect(app.render.client_logical()));
     b.path_edit.open(
         app.panel, rc, b.path, app.render.dpi,
         [&app](const std::wstring& t) {
@@ -314,7 +325,7 @@ void browse_rename_selected(App& app) {
     BrowseState& b = s.browse;
     const int sel = b.sel;
     if (sel < 0 || sel >= static_cast<int>(b.entries.size())) return;
-    const D2D1_RECT_F list = browse_list_rect(app.render.client_logical());
+    const D2D1_RECT_F list = browse_list_rect(s, app.render.client_logical());
     const float row_top = list.top + (sel - b.scroll) * kBrowseRowH;
     const D2D1_RECT_F input = D2D1::RectF(list.left, row_top, list.right, row_top + kBrowseRowH);
     const RECT rc = app.render.to_physical(input);
@@ -368,7 +379,7 @@ bool browse_keydown(App& app, UINT vk) {
     AppState& s = app.state;
     BrowseState& b = s.browse;
     const int count = static_cast<int>(b.entries.size());
-    const int rows = browse_rows_visible(app.render.client_logical());
+    const int rows = browse_rows_visible(s, app.render.client_logical());
 
     const bool ctrl = (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift = (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
@@ -513,49 +524,51 @@ void browse_render(App& app) {
     BrowseState& b = s.browse;
     const D2D1_SIZE_F client = r.client_logical();
 
-    // 路径栏
+    // 路径栏：Win11 的地址栏（控件底 + 1px 描边 + 4 圆角）
     const D2D1_RECT_F bar = browse_path_rect(client);
-    r.fill_round_rect(bar, 6.f, r.theme.card);
+    r.fill_round_rect(bar, kRadiusSm, r.theme.control);
+    r.stroke_round_rect(bar, kRadiusSm, r.theme.border, 1.f);
     if (!b.path_edit.is_open()) {
         const std::wstring shown =
             b.path.empty() ? L"未设置浏览目录：托盘图标右键 → 设置浏览目录…" : b.path;
-        r.text(D2D1::RectF(bar.left + 10.f, bar.top, bar.right - 10.f, bar.bottom), shown,
-               r.format(13.f), b.path.empty() ? r.theme.text_dim : r.theme.text);
+        const D2D1_RECT_F inner = browse_path_inner_rect(client);
+        r.text(D2D1::RectF(inner.left + 10.f, bar.top, inner.right, bar.bottom), shown,
+               r.format(14.f), b.path.empty() ? r.theme.text_faint : r.theme.text);
     }
 
-    // 提示行 / 错误行
-    float list_top = browse_list_rect(client).top;
+    // 提示行 / 错误行（列表上沿由 browse_list_rect 让出这一行的高度）
+    const D2D1_RECT_F list = browse_list_rect(s, client);
     if (!b.error.empty() || !b.note.empty() || b.loading) {
         const std::wstring line = !b.error.empty()
                                       ? (L"无法访问：" + b.error + L"（F5 重试）")
                                       : (b.loading ? L"正在读取…" : b.note);
-        const D2D1_COLOR_F color =
-            b.error.empty() ? r.theme.text_dim : D2D1::ColorF(0.85f, 0.45f, 0.40f);
-        r.text(D2D1::RectF(kPad, bar.bottom + 2.f, client.width - kPad, bar.bottom + 2.f + 20.f),
+        const D2D1_COLOR_F color = b.error.empty() ? r.theme.text_dim : r.theme.danger;
+        r.text(D2D1::RectF(kPad, bar.bottom + 2.f, client.width - kPad,
+                           bar.bottom + 2.f + browse_note_h(b)),
                line, r.format(12.f), color);
     }
-    list_top = browse_list_rect(client).top;
 
     // 列表
     if (b.entries.empty() && b.error.empty() && !b.loading) {
-        r.text(D2D1::RectF(kPad, list_top, client.width - kPad, list_top + 24.f), L"（空目录）",
-               r.format(13.f), r.theme.text_dim);
+        r.text(D2D1::RectF(kPad, list.top, client.width - kPad, list.top + 24.f), L"（空目录）",
+               r.format(14.f), r.theme.text_faint);
         return;
     }
 
-    IDWriteTextFormat* name_fmt = r.format(13.f);
-    const int rows = browse_rows_visible(client);
+    IDWriteTextFormat* name_fmt = r.format(14.f);
+    const int rows = browse_rows_visible(s, client);
     for (int i = b.scroll; i < std::min(static_cast<int>(b.entries.size()), b.scroll + rows);
          ++i) {
         const FsEntry& e = b.entries[static_cast<size_t>(i)];
-        const float y = list_top + (i - b.scroll) * kBrowseRowH;
+        const float y = list.top + (i - b.scroll) * kBrowseRowH;
         const D2D1_RECT_F row =
             D2D1::RectF(kPad, y, client.width - kPad, y + kBrowseRowH - 2.f);
         const bool selected = i == b.sel;
         if (selected) {
-            r.fill_round_rect(row, 4.f, r.theme.accent);
+            r.fill_round_rect(row, kRadiusSm, r.theme.sel_fill);
+            r.stroke_round_rect(row, kRadiusSm, r.theme.sel_stroke, 1.f);
         } else if (i == b.hover) {
-            r.fill_round_rect(row, 4.f, r.theme.hover);
+            r.fill_round_rect(row, kRadiusSm, r.theme.hover);
         }
 
         const float ix = row.left + 6.f;
@@ -565,13 +578,12 @@ void browse_render(App& app) {
         if (ID2D1Bitmap* bmp = icons_get(r, full, e.is_dir)) {
             r.rt->DrawBitmap(bmp, irect, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
         } else {
-            r.fill_round_rect(irect, 3.f, ext_color(e.name));  // 骨架先出，图标后到
+            r.fill_round_rect(irect, 4.f, ext_color(e.name));  // 骨架先出，图标后到
         }
 
         const D2D1_RECT_F label =
             D2D1::RectF(ix + kBrowseIcon + 8.f, y, row.right - 6.f, y + kBrowseRowH - 2.f);
-        r.text(label, e.name, name_fmt,
-               selected ? D2D1::ColorF(1.f, 1.f, 1.f) : r.theme.text);
+        r.text(label, e.name, name_fmt, r.theme.text);
     }
 }
 

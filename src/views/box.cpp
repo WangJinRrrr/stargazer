@@ -17,7 +17,7 @@ namespace {
 
 // 与分组标签同款：按名字宽度排布（中文名字宽度不固定，等宽分段会挤）
 float box_tab_width(const std::wstring& name) {
-    return 24.f + static_cast<float>(name.size()) * 13.f;
+    return 26.f + static_cast<float>(name.size()) * 14.f;
 }
 
 // 第 index 个盒子标签的矩形（改名输入框要把自己叠在这上面）
@@ -91,28 +91,45 @@ void box_render(App& app) {
     const D2D1_RECT_F hint = D2D1::RectF(kPad, tr.bottom + kPad, client.width - kPad,
                                          tr.bottom + kPad + 40.f);
 
-    // 盒子标签行
-    IDWriteTextFormat* tab_fmt = r.format(13.f);
+    // 盒子标签 = Win11 的分段控件（SelectorBar）：一个圆角容器 + 选中项强调色药丸。
+    // 药丸在行内垂直居中（高 28），而行高仍是 36（命中/改名框用整行，热区大一点好点）。
+    IDWriteTextFormat* tab_fmt = r.format(14.f, DWRITE_FONT_WEIGHT_NORMAL,
+                                          DWRITE_TEXT_ALIGNMENT_CENTER);
+    const float pill_top = tr.top + 4.f;
+    const float pill_bottom = tr.bottom - 4.f;
     float x = tr.left;
+    float total = 0.f;
+    for (size_t i = 0; i < s.boxes.size(); ++i) total += box_tab_width(s.boxes[i].name) + 6.f;
+    if (!s.boxes.empty()) {
+        const D2D1_RECT_F tray = D2D1::RectF(tr.left, pill_top, tr.left + total + 2.f, pill_bottom);
+        r.fill_round_rect(tray, kRadiusMd, r.theme.card);
+        r.stroke_round_rect(tray, kRadiusMd, r.theme.border, 1.f);
+    }
     for (size_t i = 0; i < s.boxes.size(); ++i) {
         const float w = box_tab_width(s.boxes[i].name);
+        const D2D1_RECT_F pill = D2D1::RectF(x, pill_top, x + w, pill_bottom);
         const D2D1_RECT_F tab = D2D1::RectF(x, tr.top, x + w, tr.bottom);
         const bool active = static_cast<int>(i) == s.box_view.box;
         const bool drop = static_cast<int>(i) == s.box_view.drag_over_tab;
+        const bool over = static_cast<int>(i) == s.box_view.tab_hover;
         if (active) {
-            r.fill_round_rect(tab, 6.f, r.theme.accent);
-            r.text(tab, s.boxes[i].name, tab_fmt, D2D1::ColorF(1.f, 1.f, 1.f));
+            r.fill_round_rect(pill, kRadiusSm, r.theme.accent);
+            r.text(tab, s.boxes[i].name, tab_fmt, r.theme.on_accent);
+        } else if (drop) {
+            // 拖拽悬停的目标盒子：强调色描边 + 淡底（比填实强调色更像 Win11）
+            r.fill_round_rect(pill, kRadiusSm, r.theme.sel_fill);
+            r.stroke_round_rect(pill, kRadiusSm, r.theme.accent, 1.f);
+            r.text(tab, s.boxes[i].name, tab_fmt, r.theme.text);
         } else {
-            r.fill_round_rect(tab, 6.f, drop ? r.theme.accent : r.theme.card);
-            r.text(tab, s.boxes[i].name, tab_fmt,
-                   drop ? D2D1::ColorF(1.f, 1.f, 1.f) : r.theme.text_dim);
+            if (over) r.fill_round_rect(pill, kRadiusSm, r.theme.hover);
+            r.text(tab, s.boxes[i].name, tab_fmt, over ? r.theme.text : r.theme.text_dim);
         }
         x += w + 6.f;
     }
 
     if (s.boxes.empty()) {
-        r.text(hint, L"还没有收纳盒：右键菜单里新建，或直接把文件拖进来", r.format(13.f),
-               r.theme.text_dim);
+        r.text(hint, L"还没有收纳盒：右键菜单里新建，或直接把文件拖进来", r.format(14.f),
+               r.theme.text_faint);
         return;
     }
 
@@ -129,12 +146,11 @@ void box_render(App& app) {
         gi.missing = items[i].missing;  // Task 4 才会填
         cells.push_back(std::move(gi));
     }
-    grid_render(r, box_layout(client), cells, s.box_view.scroll, r.theme.accent, r.theme.hover,
-                r.theme.text, r.theme.text_dim);
+    grid_render(r, box_layout(client), cells, s.box_view.scroll);
 
     if (items.empty()) {
-        r.text(hint, L"这个盒子还是空的：把文件拖到窗口里就会添加引用", r.format(13.f),
-               r.theme.text_dim);
+        r.text(hint, L"这个盒子还是空的：把文件拖到窗口里就会添加引用", r.format(14.f),
+               r.theme.text_faint);
     }
 }
 

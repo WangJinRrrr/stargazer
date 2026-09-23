@@ -1,6 +1,9 @@
 #include "edit.h"
 
 #include <commctrl.h>
+#include <uxtheme.h>  // SetWindowTheme：多行 EDIT 的滚动条也要深色
+
+#include "render.h"  // ui_font_family()：输入框与自绘文字同脸
 
 namespace sg {
 
@@ -88,8 +91,9 @@ LRESULT CALLBACK edit_subclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_P
 
 HBRUSH edit_bg_brush() {
     if (!g_bg_brush) {
-        // 与 Theme::card 一致的实色（37,39,45）
-        g_bg_brush = ::CreateSolidBrush(RGB(37, 39, 45));
+        // 与“Theme::control 叠在 Theme::bg 上”的实色一致（0x202020 + 6% 白 ≈ #2E2E2E），
+        // 否则编辑框在容器里会露出一块颜色不对的方角。
+        g_bg_brush = ::CreateSolidBrush(RGB(46, 46, 46));
     }
     return g_bg_brush;
 }
@@ -108,10 +112,10 @@ void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initi
     committing = false;
 
     if (font) ::DeleteObject(font);
-    const int height = -::MulDiv(12, static_cast<int>(dpi > 0.f ? dpi : 96.f), 96);
+    const int height = -::MulDiv(14, static_cast<int>(dpi > 0.f ? dpi : 96.f), 96);
     font = ::CreateFontW(height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                         DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+                         DEFAULT_PITCH | FF_DONTCARE, ui_font_family());
 
     const DWORD style = WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL |
                         (multiline ? (ES_MULTILINE | ES_AUTOVSCROLL) : 0);
@@ -127,7 +131,16 @@ void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initi
     }
 
     ::SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-    ::SendMessageW(hwnd, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(2, 2));
+    ::SetWindowTheme(hwnd, L"DarkMode_Explorer", nullptr);  // 深色滚动条/插入符
+    // 内边距：与容器里占位文字的 +10 对齐（否则真文字与占位提示会差 8px）
+    const int pad = ::MulDiv(10, static_cast<int>(dpi > 0.f ? dpi : 96.f), 96);
+    ::SendMessageW(hwnd, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(pad, pad));
+    if (multiline) {
+        // 多行 EDIT 的文字区默认贴着上沿；给一点上边距让它在内框里看着居中
+        const int top_pad = ::MulDiv(4, static_cast<int>(dpi > 0.f ? dpi : 96.f), 96);
+        RECT fr{ 0, top_pad, rc.right - rc.left, rc.bottom - rc.top };
+        ::SendMessageW(hwnd, EM_SETRECT, 0, reinterpret_cast<LPARAM>(&fr));
+    }
     ::SendMessageW(hwnd, EM_SETSEL, 0, -1);  // 全选，直接输入即替换
     ::SetWindowSubclass(hwnd, edit_subclass, kSubclassId, reinterpret_cast<DWORD_PTR>(this));
     focus();

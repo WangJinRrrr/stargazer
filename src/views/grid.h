@@ -10,11 +10,13 @@
 
 namespace sg {
 
-// 共用网格常量（96 DPI 逻辑像素）。启动板与收纳盒的网格必须用同一份布局算法，
-// 否则会出现“点得到但画不出”。
+// 共用网格常量（96 DPI 逻辑像素）。网格布局算法只有一份，否则会出现“点得到但画不出”。
 constexpr float kCell = 96.f;
 constexpr float kGap = 8.f;
 constexpr float kPad = 16.f;
+// Fluent 2 圆角：控件 4、卡片/层 8
+constexpr float kRadiusSm = 4.f;
+constexpr float kRadiusMd = 8.f;
 constexpr float kTabsH = 36.f;    // 分组/盒子标签行
 constexpr float kSearchH = 34.f;  // 搜索框行
 
@@ -48,20 +50,22 @@ bool grid_keydown(const GridLayout& gl, int count, int& sel, int& scroll, UINT v
 
 // 把一屏可见的格子画出来（虚拟化：只画可见行）
 void grid_render(Renderer& r, const GridLayout& gl, const std::vector<GridItem>& items,
-                 int scroll, D2D1_COLOR_F accent, D2D1_COLOR_F hover_color,
-                 D2D1_COLOR_F text_color, D2D1_COLOR_F missing_color);
+                 int scroll);
 
 // 按扩展名给占位块配色（同一扩展名总是同一颜色且重启不变）
 D2D1_COLOR_F ext_color(const std::wstring& path);
 
 // --- 顶层视图标签行（收纳盒 / 待办 / 浏览）---
-constexpr float kViewTabsH = 28.f;
+// Win11 顶部标签：标签按文字宽度左对齐排布，标签之外的整行都是拖动区（见 WM_NCHITTEST）。
+constexpr float kViewTabsH = 40.f;
 constexpr int kViewCount = 3;
 
 D2D1_RECT_F view_tabs_rect(D2D1_SIZE_F client);
-// 返回视图下标（0..3），未命中 -1
-int view_tab_hittest(D2D1_SIZE_F client, D2D1_POINT_2F pt);
-void view_tabs_render(Renderer& r, D2D1_SIZE_F client, int active);
+// 第 i 个标签的矩形。渲染与命中共用它（测量结果按 DPI 缓存）。
+D2D1_RECT_F view_tab_rect(Renderer& r, int i);
+// 返回视图下标（0..2），未命中 -1
+int view_tab_hittest(Renderer& r, D2D1_POINT_2F pt);
+void view_tabs_render(Renderer& r, D2D1_SIZE_F client, int active, int hover);
 const wchar_t* view_name(int v);
 
 }  // namespace sg

@@ -105,11 +105,11 @@ static void test_todo_row_offsets() {
         if (text) t.text = text;
         return t;
     };
-    CHECK_EQ(sg::todo_row_height(item(TodoKind::Text, L"短")), 28.f);
-    CHECK_EQ(sg::todo_row_height(item(TodoKind::Link, L"https://a")), 28.f);
+    CHECK_EQ(sg::todo_row_height(item(TodoKind::Text, L"短")), 32.f);
+    CHECK_EQ(sg::todo_row_height(item(TodoKind::Link, L"https://a")), 32.f);
     CHECK_EQ(sg::todo_row_height(item(TodoKind::Image, nullptr)), 96.f);
-    // 多行文字要画两行 → 36（28 会把上下各切掉几像素）
-    CHECK_EQ(sg::todo_row_height(item(TodoKind::Text, L"一\n二")), 36.f);
+    // 多行文字要画两行 → 40（32 会把上下各切掉几像素）
+    CHECK_EQ(sg::todo_row_height(item(TodoKind::Text, L"一\n二")), 40.f);
 
     const std::vector<TodoItem> items = { item(TodoKind::Text, L"短"),
                                           item(TodoKind::Image, nullptr),
@@ -117,18 +117,18 @@ static void test_todo_row_offsets() {
     const std::vector<float> off = sg::todo_row_offsets(items);
     CHECK_EQ(off.size(), size_t{4});
     CHECK_EQ(off[0], 0.f);
-    CHECK_EQ(off[1], 28.f);
-    CHECK_EQ(off[2], 124.f);  // 28 + 96
-    CHECK_EQ(off[3], 160.f);  // + 36（多行文字行）
+    CHECK_EQ(off[1], 32.f);
+    CHECK_EQ(off[2], 128.f);  // 32 + 96
+    CHECK_EQ(off[3], 168.f);  // + 40（多行文字行）
 
     // 命中：行内任意 y 都落在该行；正好在边界上算下一行
     CHECK_EQ(sg::todo_row_at(off, 0.f), 0);
-    CHECK_EQ(sg::todo_row_at(off, 27.9f), 0);
-    CHECK_EQ(sg::todo_row_at(off, 28.f), 1);
-    CHECK_EQ(sg::todo_row_at(off, 123.9f), 1);
-    CHECK_EQ(sg::todo_row_at(off, 124.f), 2);
-    CHECK_EQ(sg::todo_row_at(off, 159.9f), 2);
-    CHECK_EQ(sg::todo_row_at(off, 160.f), -1);  // 列表下方空白
+    CHECK_EQ(sg::todo_row_at(off, 31.9f), 0);
+    CHECK_EQ(sg::todo_row_at(off, 32.f), 1);
+    CHECK_EQ(sg::todo_row_at(off, 127.9f), 1);
+    CHECK_EQ(sg::todo_row_at(off, 128.f), 2);
+    CHECK_EQ(sg::todo_row_at(off, 167.9f), 2);
+    CHECK_EQ(sg::todo_row_at(off, 168.f), -1);  // 列表下方空白
     CHECK_EQ(sg::todo_row_at(off, -1.f), -1);
 
     // 空列表
@@ -140,21 +140,21 @@ static void test_todo_scroll_clamp_and_visibility() {
     using sg::TodoKind;
     TodoItem row;
     row.kind = TodoKind::Text;
-    std::vector<TodoItem> items(10, row);  // 10 行 × 28 = 280
+    std::vector<TodoItem> items(10, row);  // 10 行 × 32 = 320
     const std::vector<float> off = sg::todo_row_offsets(items);
-    const float viewport = 100.f;  // 只能看到约 3.5 行
+    const float viewport = 100.f;  // 只能看到约 3 行
 
     CHECK_EQ(sg::todo_scroll_for(off, viewport, 0.f, -1), 0.f);  // 没选中：不动
     CHECK_EQ(sg::todo_scroll_for(off, viewport, 0.f, 0), 0.f);   // 第 0 行本来就在视野里
-    // 第 5 行是 140..168：让它的底贴住视口底 → 168 - 100 = 68
-    CHECK_EQ(sg::todo_scroll_for(off, viewport, 0.f, 5), 68.f);
-    // 第 1 行是 28..56：向上只需要滚到它的上边（最小位移，不必回到 0）
-    CHECK_EQ(sg::todo_scroll_for(off, viewport, 200.f, 1), 28.f);
+    // 第 5 行是 160..192：让它的底贴住视口底 → 192 - 100 = 92
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 0.f, 5), 92.f);
+    // 第 1 行是 32..64：向上只需要滚到它的上边（最小位移，不必回到 0）
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 200.f, 1), 32.f);
     // 选中在上面 → 滚回去（同一条规则的另一个例子）
-    CHECK_EQ(sg::todo_scroll_for(off, viewport, 68.f, 1), 28.f);
-    // 没选中（sel<0）时不做可见性调整，但**仍然夹紧**：999 > 总高-视口 → 180
-    CHECK_EQ(sg::todo_scroll_for(off, viewport, 999.f, -1), 180.f);
-    CHECK_EQ(sg::todo_scroll_for(off, viewport, 999.f, 9), 180.f);  // 280 - 100
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 92.f, 1), 32.f);
+    // 没选中（sel<0）时不做可见性调整，但**仍然夹紧**：999 > 总高-视口 → 220
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 999.f, -1), 220.f);
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 999.f, 9), 220.f);  // 320 - 100
     // 视口比内容还高：scroll 只能是 0
     CHECK_EQ(sg::todo_scroll_for(off, 1000.f, 50.f, 9), 0.f);
 }

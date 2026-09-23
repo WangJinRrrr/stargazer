@@ -18,6 +18,7 @@
 #include "views/todo.h"
 
 #include <shobjidl.h>  // IFileDialog（托盘菜单选浏览目录）
+#include <dwmapi.h>     // Win11 圆角/深色框（可选属性，失败也不影响绘制）
 
 namespace sg {
 
@@ -27,6 +28,45 @@ const wchar_t* kPanelClass = L"StargazerWnd";
 namespace {
 
 const UINT kTrayId = 1;
+
+// 让系统自己画的那些东西（菜单、MessageBox、子控件滚动条）也用深色：
+// uxtheme 的 SetPreferredAppMode 只导出了序数 135，Win10 1809+ 都在。
+// 失败就算了（老系统上菜单就是浅色的，不影响自绘的窗口）。
+static void apply_dark_app_mode() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    if (HMODULE ux = ::LoadLibraryW(L"uxtheme.dll")) {
+        using SetPreferredAppModeFn = int(WINAPI*)(int);
+        auto set_mode = reinterpret_cast<SetPreferredAppModeFn>(
+            ::GetProcAddress(ux, MAKEINTRESOURCEA(135)));
+        if (set_mode) set_mode(2);  // PreferredAppMode::ForceDark（本程序只做深色）
+        ::FreeLibrary(ux);          // 设置是全局的，库可以卸载
+    }
+}
+
+// Win11 窗口外观：圆角 + 系统投影 + 深色框颜色。都走 DWM 的窗口属性，
+// 不碰渲染器（D2D 仍是不透明表面，所以不做 Mica/亚克力那种透明清屏）。
+// 任何一步失败都只是少一点原生味，不报错。
+static void apply_win11_chrome(HWND hwnd) {
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+#ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+#define DWMWA_WINDOW_CORNER_PREFERENCE 33
+#endif
+#ifndef DWMWCP_ROUND
+#define DWMWCP_ROUND 2
+#endif
+    const BOOL dark = TRUE;
+    ::DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    const DWORD corner = DWMWCP_ROUND;
+    ::DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+    // 1px 的框：让 DWM 给出圆角与投影（客户区仍全部由我们绘制）。
+    // 用 -1 会让整个客户区变成系统材质，那种做法要换掉渲染器，不在本次范围内。
+    const MARGINS margins{ 1, 1, 1, 1 };
+    ::DwmExtendFrameIntoClientArea(hwnd, &margins);
+}
 
 // 托盘菜单要用（定义在下方）
 static void app_set_view(App& app, View v);
@@ -206,6 +246,7 @@ bool ensure_panel(App& app) {
     if (!app.panel) return false;
 
     app.render.init(app.panel);  // 内部会取 GetDpiForWindow，与上面 dpi 一致
+    apply_win11_chrome(app.panel);  // 圆角 + 系统投影 + 深色框（失败就保持方角，不影响绘制）
 
     // 拖放注册在面板窗口上（用户是往面板上拖），面板是懒创建的，所以注册也在这里
     dragdrop_set_drag_flag(&app.in_drag);
@@ -329,6 +370,19 @@ LRESULT CALLBACK ctl_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return ::DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+// 悬停项变化时才重绘（鼠标每动一下就重绘会把空闲 CPU 拉上去），
+// 并保证 MouseLeave 通知到位（不然悬停高亮会粘住）。
+static void set_hover(App& app, int& slot, int value) {
+    if (slot == value) return;
+    slot = value;
+    if (!app.mouse_tracking) {
+        TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, app.panel, 0 };
+        ::TrackMouseEvent(&tme);
+        app.mouse_tracking = true;
+    }
+    ::InvalidateRect(app.panel, nullptr, FALSE);
+}
+
 LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     App* app = reinterpret_cast<App*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
@@ -358,9 +412,19 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (right) return HTRIGHT;
             if (top) return HTTOP;
             if (bottom) return HTBOTTOM;
-            // 顶部标题条（逻辑高 52）= 拖动区；子 EDIT 不会被走到这里
-            const int title_h = ::MulDiv(52, static_cast<int>(::GetDpiForWindow(hwnd)), 96);
-            if (pt.y < rc.top + title_h) return HTCAPTION;
+            // 顶部标签行：标签本身要能点（否则鼠标点标签变成了拖窗口）；
+            // 标签之外的整行才是拖动区（浏览器标签栏的做法）
+            if (pt.y < rc.top + ::MulDiv(static_cast<int>(kViewTabsH),
+                                         static_cast<int>(::GetDpiForWindow(hwnd)), 96)) {
+                if (app) {
+                    const POINT client{ pt.x - rc.left, pt.y - rc.top };
+                    const D2D1_POINT_2F lpt = app->render.to_logical(client);
+                    if (app->render.dwrite && view_tab_hittest(app->render, lpt) >= 0) {
+                        return HTCLIENT;
+                    }
+                }
+                return HTCAPTION;
+            }
             return HTCLIENT;
         }
         case WM_MOUSEWHEEL: {
@@ -401,7 +465,8 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app && app->render.begin()) {
                 app->render.clear(app->render.theme.bg);
                 const D2D1_SIZE_F cs = app->render.client_logical();
-                view_tabs_render(app->render, cs, static_cast<int>(app->state.view));
+                view_tabs_render(app->render, cs, static_cast<int>(app->state.view),
+                                 app->state.nav_hover);
                 switch (app->state.view) {
                     case View::Box:
                         box_render(*app);
@@ -412,15 +477,6 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     case View::Browse:
                         browse_render(*app);
                         break;
-                    default:
-                        // 待办还没实现；这一行只用来证明切换真的生效
-                        app->render.text(
-                            D2D1::RectF(kPad, kViewTabsH + kPad * 2.f, cs.width - kPad,
-                                        kViewTabsH + kPad * 2.f + 40.f),
-                            std::wstring(view_name(static_cast<int>(app->state.view))) +
-                                L"：尚未实现",
-                            app->render.format(13.f), app->render.theme.text_dim);
-                        break;
                 }
                 app->render.end();
             }
@@ -428,9 +484,11 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_CTLCOLOREDIT: {
+            // EDIT 子控件的底/字色：与 Theme::control 叠在 Theme::bg 上的实色一致
+            // （0x202020 + 6% 白 ≈ #2E2E2E；文字用 TextFillPrimary 的实色 ≈ #E9E9E9）
             HDC dc = reinterpret_cast<HDC>(wp);
-            ::SetTextColor(dc, RGB(217, 222, 230));
-            ::SetBkColor(dc, RGB(37, 39, 45));
+            ::SetTextColor(dc, RGB(233, 233, 233));
+            ::SetBkColor(dc, RGB(46, 46, 46));
             return reinterpret_cast<LRESULT>(edit_bg_brush());
         }
         case WM_MOUSEMOVE: {
@@ -440,6 +498,9 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const D2D1_SIZE_F cs = app->render.client_logical();
 
             if (app->in_drag) return 0;  // 外部 OLE 拖拽悬停中，不高亮悬停项
+
+            // 顶部视图标签（三个视图共用）
+            set_hover(*app, app->state.nav_hover, view_tab_hittest(app->render, lpt));
 
             // 盒内拖拽中：高亮目标盒子标签；鼠标离开窗口就转成 OLE 拖出
             if (app->state.view == View::Box && app->internal_drag) {
@@ -482,48 +543,20 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app->state.view != View::Box) {
                 // 待办：悬停高亮
                 if (app->state.view == View::Todo) {
-                    TodoState& t = app->state.todo;
-                    const int th = todo_hittest(*app, lpt);
-                    if (th != t.hover) {
-                        t.hover = th;
-                        if (!app->mouse_tracking) {
-                            TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
-                            ::TrackMouseEvent(&tme);
-                            app->mouse_tracking = true;
-                        }
-                        ::InvalidateRect(hwnd, nullptr, FALSE);
-                    }
+                    set_hover(*app, app->state.todo.hover, todo_hittest(*app, lpt));
                     return 0;
                 }
                 // 浏览：悬停高亮（键盘归列表，不需子控件）
                 if (app->state.view == View::Browse) {
-                    const int bh = browse_row_hittest(app->state, cs, lpt);
-                    if (bh != app->state.browse.hover) {
-                        app->state.browse.hover = bh;
-                        if (!app->mouse_tracking) {
-                            TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
-                            ::TrackMouseEvent(&tme);
-                            app->mouse_tracking = true;
-                        }
-                        ::InvalidateRect(hwnd, nullptr, FALSE);
-                    }
+                    set_hover(*app, app->state.browse.hover,
+                              browse_row_hittest(app->state, cs, lpt));
                 }
                 return 0;
             }
 
-            const int hit = box_hittest(*app, lpt);
-            int& hover = app->state.box_view.hover;
-
-            if (hit != hover) {
-                hover = hit;
-                if (!app->mouse_tracking) {
-                    TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
-                    ::TrackMouseEvent(&tme);
-                    app->mouse_tracking = true;
-                }
-                // 只在悬停项变化时重绘，鼠标每动一下就重绘会让空闲 CPU 上去
-                ::InvalidateRect(hwnd, nullptr, FALSE);
-            }
+            set_hover(*app, app->state.box_view.hover, box_hittest(*app, lpt));
+            set_hover(*app, app->state.box_view.tab_hover,
+                      box_tab_hittest(app->state, cs, lpt));
             return 0;
         }
         case WM_MOUSELEAVE:
@@ -541,7 +574,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const D2D1_SIZE_F cs = app->render.client_logical();
 
             // 视图标签行在最顶部，比盒子标签更先命中
-            const int vt = view_tab_hittest(cs, lpt);
+            const int vt = view_tab_hittest(app->render, lpt);
             if (vt >= 0) {
                 app_set_view(*app, static_cast<View>(vt));
                 return 0;
@@ -946,6 +979,7 @@ void app_toggle(App& app) {
 
 bool app_init(App& app, HINSTANCE inst) {
     app.inst = inst;
+    apply_dark_app_mode();
 
     // Review Focus 1：数据目录不可写时明确告知并退出，不静默丢数据
     if (!init_paths(app.paths)) {

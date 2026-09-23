@@ -20,6 +20,7 @@ struct BoxState {
     int box = 0;            // 当前盒子下标
     int sel = -1;           // 网格选中下标；-1 = 无
     int hover = -1;
+    int tab_hover = -1;      // 悬停的盒子标签（分段控件的 hover 状态）
     int scroll = 0;         // 起始行
     int drag_over_tab = -1;  // 内部拖拽时高亮的目标盒子标签
     // 重命名输入框。原来借用启动板的搜索框（全程序只有一个 EDIT 实例），
@@ -64,6 +65,7 @@ struct AppState {
     Config config;
     int bad_lines = 0;
     View view = View::Box;  // 首次启动（ui.txt 还没有记录时）停在收纳盒
+    int nav_hover = -1;     // 顶部视图标签的悬停下标（-1 = 无）
     BoxState box_view;
     TodoState todo;
     BrowseState browse;

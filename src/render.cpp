@@ -7,6 +7,41 @@
 
 namespace sg {
 
+namespace {
+
+// 字体是否存在：拿 GDI 枚举一次比 CreateTextFormat 可靠 ——
+// DWrite 遇到不存在的族名会静默给一个替代字体，不会失败。
+bool font_family_exists(const wchar_t* name) {
+    HDC dc = ::GetDC(nullptr);
+    if (!dc) return false;
+    LOGFONTW lf{};
+    lf.lfCharSet = DEFAULT_CHARSET;
+    ::wcsncpy_s(lf.lfFaceName, name, _TRUNCATE);
+    bool found = false;
+    ::EnumFontFamiliesExW(
+        dc, &lf,
+        [](const LOGFONTW*, const TEXTMETRICW*, DWORD, LPARAM param) -> int {
+            *reinterpret_cast<bool*>(param) = true;
+            return 0;
+        },
+        reinterpret_cast<LPARAM>(&found), 0);
+    ::ReleaseDC(nullptr, dc);
+    return found;
+}
+
+}  // namespace
+
+const wchar_t* ui_font_family() {
+    static const std::wstring family = [] {
+        for (const wchar_t* candidate : { L"Segoe UI Variable Text", L"Segoe UI",
+                                          L"Microsoft YaHei UI" }) {
+            if (font_family_exists(candidate)) return std::wstring(candidate);
+        }
+        return std::wstring(L"Microsoft YaHei UI");
+    }();
+    return family.c_str();
+}
+
 bool Renderer::init(HWND wnd) {
     hwnd = wnd;
     if (FAILED(::D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &factory))) return false;
@@ -114,13 +149,14 @@ void Renderer::release_surfaces() { discard_device_resources(); }
 
 IDWriteTextFormat* Renderer::format(float size, DWRITE_FONT_WEIGHT weight,
                                     DWRITE_TEXT_ALIGNMENT align) {
+    if (!dwrite) return nullptr;  // 设备/工厂未就绪：调用方按 nullptr 处理
     wchar_t key[64] = {};
     ::swprintf_s(key, L"%.1f|%d|%d", size, static_cast<int>(weight), static_cast<int>(align));
     auto it = formats.find(key);
     if (it != formats.end()) return it->second;
 
     IDWriteTextFormat* fmt = nullptr;
-    if (FAILED(dwrite->CreateTextFormat(L"Microsoft YaHei UI", nullptr, weight,
+    if (FAILED(dwrite->CreateTextFormat(ui_font_family(), nullptr, weight,
                                         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                                         size, L"zh-cn", &fmt))) {
         return nullptr;
@@ -160,6 +196,20 @@ RECT Renderer::to_physical(const D2D1_RECT_F& logic) const {
 void Renderer::fill_rect(const D2D1_RECT_F& r, D2D1_COLOR_F c) {
     brush->SetColor(c);
     rt->FillRectangle(&r, brush);
+}
+
+D2D1_SIZE_F Renderer::measure_text(const std::wstring& s, IDWriteTextFormat* fmt) {
+    if (!dwrite || !fmt || s.empty()) return D2D1::SizeF(0.f, 0.f);
+    IDWriteTextLayout* layout = nullptr;
+    if (FAILED(dwrite->CreateTextLayout(s.c_str(), static_cast<UINT32>(s.size()), fmt, 4096.f,
+                                        1024.f, &layout)) ||
+        !layout) {
+        return D2D1::SizeF(0.f, 0.f);
+    }
+    DWRITE_TEXT_METRICS m{};
+    layout->GetMetrics(&m);
+    layout->Release();
+    return D2D1::SizeF(m.width, m.height);
 }
 
 void Renderer::fill_round_rect(const D2D1_RECT_F& r, float radius, D2D1_COLOR_F c) {

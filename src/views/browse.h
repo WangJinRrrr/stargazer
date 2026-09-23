@@ -14,17 +14,18 @@ namespace sg {
 struct App;
 
 // 布局常量（逻辑 DIP）
-constexpr float kBrowseRowH = 28.f;    // 列表行高
-constexpr float kBrowseBarH = 32.f;    // 路径栏高度
-constexpr float kBrowseIcon = 16.f;    // 行内图标边长
+constexpr float kBrowseRowH = 32.f;   // 列表行高（Win11 标准控件高）
+constexpr float kBrowseBarH = 32.f;   // 路径栏高度
+constexpr float kBrowseIcon = 20.f;   // 行内图标边长
 
-// 路径栏 / 列表区矩形
+// 路径栏 / 列表区矩形（列表上沿要把“正在读取/错误/提示”那一行让出来，
+// 否则提示文字会压在第一条上 —— 命中与渲染共用这一个上沿）
 D2D1_RECT_F browse_path_rect(D2D1_SIZE_F client);
-D2D1_RECT_F browse_list_rect(D2D1_SIZE_F client);
+D2D1_RECT_F browse_list_rect(const AppState& s, D2D1_SIZE_F client);
 // 返回可见行下标；未命中返回 -1
 int browse_row_hittest(const AppState& s, D2D1_SIZE_F client, D2D1_POINT_2F pt);
 // 列表最多能显示多少行
-int browse_rows_visible(D2D1_SIZE_F client);
+int browse_rows_visible(const AppState& s, D2D1_SIZE_F client);
 
 // 当前选中项的完整路径；没有选中返回空
 std::wstring browse_sel_path(const AppState& s);

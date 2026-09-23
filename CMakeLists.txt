@@ -59,4 +59,4 @@ add_executable(stargazer WIN32 ${SG_SOURCES} ${MODEL_SOURCES})
 target_include_directories(stargazer PRIVATE src)
 target_compile_options(stargazer PRIVATE /O2)
 target_link_libraries(stargazer PRIVATE
-  d2d1 dwrite shell32 ole32 shlwapi comctl32 dwmapi user32 gdi32 windowscodecs)
+  d2d1 dwrite shell32 ole32 shlwapi comctl32 dwmapi user32 gdi32 windowscodecs uxtheme)
