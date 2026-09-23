@@ -6,6 +6,7 @@
 #include <string>
 
 #include "icons.h"
+#include "model/paths.h"
 #include "text_io.h"
 
 namespace sg {
@@ -161,33 +162,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ::BeginPaint(hwnd, &ps);
             if (app && app->render.begin()) {
                 app->render.clear(app->render.theme.bg);
-                // 必须用逻辑尺寸：直接用 GetClientRect 的物理像素会让卡片在高 DPI 下超出窗口
-                const D2D1_SIZE_F cs = app->render.client_logical();
-                const D2D1_RECT_F card = D2D1::RectF(16.f, 56.f, cs.width - 16.f, cs.height - 16.f);
-                app->render.fill_round_rect(card, 8.f, app->render.theme.panel);
-                app->render.text(D2D1::RectF(24.f, 16.f, 400.f, 44.f), L"Stargazer 渲染层就绪",
-                                 app->render.format(16.f, DWRITE_FONT_WEIGHT_SEMI_BOLD),
-                                 app->render.theme.text);
-                // TEMP(Task 9 移除)：图标验证钩子
-                if (!app->debug_icon.empty()) {
-                    const bool is_dir = app->debug_icon.back() == L'\\';
-                    ID2D1Bitmap* dbg_bmp = icons_get(app->render, app->debug_icon, is_dir);
-                    // TEMP 观测：把绘制分支写在标题上（Task 9 随钩子一起删）
-                    ::SetWindowTextW(hwnd, dbg_bmp ? L"paint:icon" : L"paint:placeholder");
-                    if (dbg_bmp) {
-                        app->render.rt->DrawBitmap(
-                            dbg_bmp,
-                            D2D1::RectF(card.left + 16.f, card.top + 16.f, card.left + 64.f,
-                                        card.top + 64.f),
-                            1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-                    } else {
-                        // 未就绪先画占位，证明“骨架先出、图标后到”
-                        app->render.fill_round_rect(
-                            D2D1::RectF(card.left + 16.f, card.top + 16.f, card.left + 64.f,
-                                        card.top + 64.f),
-                            8.f, D2D1::ColorF(0.35f, 0.45f, 0.62f));
-                    }
-                }
+                launcher_render(app->render, app->state, app->render.client_logical());
                 app->render.end();
             }
             ::EndPaint(hwnd, &ps);
@@ -199,44 +174,97 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ::SetBkColor(dc, RGB(37, 39, 45));
             return reinterpret_cast<LRESULT>(edit_bg_brush());
         }
-        case WM_KEYDOWN:
-            // app 为空的路径理论到不了这里，但不必为此崩一次
-            if (!app) return 0;
-            if (wp == VK_F2) {
-                // TEMP(Task 8 验证钩子，Task 9 删除)：在卡片内打开一个 InlineEdit，
-                // 提交后把结果显示到窗口标题上供探针读取
-                const D2D1_RECT_F wanted = D2D1::RectF(200.f, 120.f, 700.f, 152.f);
-                const RECT rc = app->render.to_physical(wanted);
-                app->edit.open(hwnd, rc, L"", app->render.dpi,
-                               [app](const std::wstring& t) {
-                                   ::SetWindowTextW(app->panel,
-                                                    (L"committed:" + t).c_str());
-                               },
-                               nullptr);
-                return 0;
-            }
-            // TEMP(Task 9 移除)：按 1/2 验证图标三级提取与异步回投
-            if (wp == L'1') {
-                app->debug_icon = L"C:\\Windows\\notepad.exe";
-                ::SetWindowTextW(hwnd, (L"dbg1:" + app->debug_icon).c_str());  // TEMP 观测
+        case WM_MOUSEMOVE: {
+            if (!app || app->in_drag) return 0;
+            const POINT phys{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            const D2D1_POINT_2F lpt = app->render.to_logical(phys);
+            const int hit = launcher_hittest(app->state, app->render.client_logical(), lpt);
+            if (hit != app->state.launcher.hover) {
+                app->state.launcher.hover = hit;
+                if (!app->mouse_tracking) {
+                    TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
+                    ::TrackMouseEvent(&tme);
+                    app->mouse_tracking = true;
+                }
+                // 只在悬停项变化时重绘，鼠标每动一下就重绘会让空闲 CPU 上去
                 ::InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
             }
-            if (wp == L'2') {
-                app->debug_icon = L"D:\\不存在的网盘目录\\a.psd";
-                ::SetWindowTextW(hwnd, (L"dbg2:" + app->debug_icon).c_str());  // TEMP 观测
-                ::InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
-            }
-            if (wp == VK_ESCAPE) app_hide(*app);
             return 0;
+        }
+        case WM_MOUSELEAVE:
+            if (app) {
+                app->mouse_tracking = false;
+                app->state.launcher.hover = -1;
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        case WM_LBUTTONDOWN: {
+            if (!app) return 0;
+            const POINT phys{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            const D2D1_POINT_2F lpt = app->render.to_logical(phys);
+            const D2D1_SIZE_F cs = app->render.client_logical();
+
+            const int tab = launcher_tab_hittest(app->state, cs, lpt);
+            if (tab >= 0) {
+                app->state.launcher.group = tab;
+                app->state.launcher.sel = -1;
+                app->state.launcher.scroll = 0;
+                launcher_refilter(app->state);
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            const int hit = launcher_hittest(app->state, cs, lpt);
+            app->state.launcher.sel = hit;  // 点空白处 = 回到无选中态
+            if (hit >= 0) ::SetFocus(hwnd);
+            ::InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        case WM_COMMAND:
+            // 边打字边过滤：EDIT 每次内容变化都会给父窗口发 EN_CHANGE，
+            // 只连 Enter/失焦的提交是不够的（那样只在提交时才过滤）。
+            if (app && HIWORD(wp) == EN_CHANGE &&
+                reinterpret_cast<HWND>(lp) == app->state.launcher.search.hwnd) {
+                app->state.launcher.query = app->state.launcher.search.text();
+                launcher_refilter(app->state);
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        case WM_CHAR: {
+            // 在网格里打字应当回到搜索框继续过滤，否则用户会以为搜索坏了
+            if (!app) return 0;
+            const wchar_t ch = static_cast<wchar_t>(wp);
+            LauncherState& ls = app->state.launcher;
+            if (ch >= 0x20 && ch != 0x7F && ls.search.is_open()) {
+                ls.sel = -1;
+                ls.search.focus();
+                ::PostMessageW(ls.search.hwnd, WM_CHAR, wp, lp);
+            }
+            return 0;
+        }
+        case WM_KEYDOWN: {
+            if (!app) return 0;
+            if (wp == VK_ESCAPE) {
+                app_hide(*app);
+                return 0;
+            }
+            const D2D1_SIZE_F cs = app->render.client_logical();
+            if (launcher_keydown(app->state, cs, static_cast<UINT>(wp))) {
+                if (app->state.launcher.sel < 0) {
+                    launcher_sync_search(app->state, hwnd, cs, app->render);
+                    app->state.launcher.search.focus();
+                } else {
+                    ::SetFocus(hwnd);
+                }
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
         case WM_CLOSE:
-            if (app) app->edit.close();
             app_hide(*app);  // 关面板不等于退出程序
             return 0;
         case WM_DESTROY:
             if (app) {
-                app->edit.close();
+                app->state.launcher.search.close();
                 app->render.shutdown();
             }
             return 0;
@@ -247,6 +275,60 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 }  // namespace
+
+void app_load(App& app) {
+    AppState& s = app.state;
+    std::wstring text;
+
+    if (load_text(app.paths, L"launcher.txt", text)) {
+        int bad = 0;
+        s.groups = parse_launcher(text, bad);
+        s.bad_lines += bad;
+    }
+    if (s.groups.empty()) {
+        // 首次运行给一个能直接用的分组，而不是空白界面
+        s.groups.push_back(LaunchGroup{ L"常用", {} });
+    }
+
+    if (load_text(app.paths, L"config.txt", text)) {
+        int bad = 0;
+        s.config = parse_config(text, bad);
+        s.bad_lines += bad;
+    }
+
+    if (load_text(app.paths, L"ui.txt", text)) {
+        int bad = 0;
+        const Config ui = parse_config(text, bad);
+        const std::wstring v = config_get(ui, L"group", L"");
+        // 只接受存在于当前数据里的分组名，防止手改后越界
+        for (size_t i = 0; i < s.groups.size(); ++i) {
+            if (s.groups[i].name == v) {
+                s.launcher.group = static_cast<int>(i);
+                break;
+            }
+        }
+        const std::wstring w = config_get(ui, L"w", L"");
+        const std::wstring h = config_get(ui, L"h", L"");
+        if (!w.empty() && !h.empty() && app.panel) {
+            // ui.txt 里的是逻辑像素，SetWindowPos 要物理像素
+            const float sc = app.render.scale();
+            ::SetWindowPos(app.panel, nullptr, 0, 0,
+                           static_cast<int>(_wtoi(w.c_str()) * sc),
+                           static_cast<int>(_wtoi(h.c_str()) * sc), SWP_NOMOVE | SWP_NOZORDER);
+        }
+    }
+    launcher_refilter(s);
+}
+
+void app_save_if_dirty(App& app) {
+    AppState& s = app.state;
+    if (!s.data_dirty) return;
+    s.data_dirty = false;
+    if (!save_text(app.paths, L"launcher.txt", serialize_launcher(s.groups))) {
+        ::MessageBoxW(app.ctl, L"保存失败：程序目录可能已变为不可写。", L"Stargazer",
+                      MB_ICONWARNING);
+    }
+}
 
 void app_show(App& app) {
     if (!ensure_panel(app)) return;
@@ -269,12 +351,22 @@ void app_show(App& app) {
     ::SetForegroundWindow(app.panel);
     // 窗口现在才真正落在某块显示器上，此时取 DPI 才准（含跨显示器不同缩放）
     app.render.sync_dpi();
+
+    // 每次呼出都从干净状态开始：清空搜索、选中态归位，焦点给搜索框
+    AppState& s = app.state;
+    s.launcher.query.clear();
+    s.launcher.sel = -1;
+    s.launcher.scroll = 0;
+    launcher_refilter(s);
+    launcher_sync_search(s, app.panel, app.render.client_logical(), app.render);
+    s.launcher.search.focus();
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
 void app_hide(App& app) {
     if (!app.panel) return;
-    app.edit.close();  // 悬空的输入框比看不见的窗口更让人困惑
+    app_save_if_dirty(app);  // 用户改完就切走很自然，落盘不能等退出
+    app.state.launcher.search.close();  // 悬空的输入框比看不见的窗口更让人困惑
     ::ShowWindow(app.panel, SW_HIDE);
     // 隐藏时把绘制表面还给系统：150% 缩放下 1440x930 的表面本身就有 5MB+。
     // 复用设备丢失那条路径，下次 begin() 会自动重建。

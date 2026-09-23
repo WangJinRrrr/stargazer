@@ -36,6 +36,7 @@ set(SG_SOURCES
   src/persist.cpp
   src/icons.cpp
   src/edit.cpp
+  src/views/launcher.cpp
 )
 
 add_executable(stargazer WIN32 ${SG_SOURCES} ${MODEL_SOURCES})

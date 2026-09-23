@@ -1,12 +1,14 @@
 #pragma once
 
 #include <windows.h>
+#include <windowsx.h>  // GET_X_LPARAM / GET_Y_LPARAM
 
 #include <string>
 
-#include "edit.h"
 #include "persist.h"
 #include "render.h"
+#include "viewapi.h"
+#include "views/launcher.h"
 
 namespace sg {
 
@@ -35,12 +37,14 @@ struct App {
     bool in_drag = false;
     bool running = true;
     bool mouse_tracking = false;
-    InlineEdit edit;  // 搜索框/重命名/新建共用同一个 EDIT 实例
-    // TEMP(Task 9 移除)：验证图标三级提取与异步回投
-    std::wstring debug_icon;
+    AppState state;
 };
 
 bool app_init(App& app, HINSTANCE inst);
+// 读 launcher.txt / config.txt / ui.txt 到 AppState
+void app_load(App& app);
+// data_dirty 时落盘并清标志
+void app_save_if_dirty(App& app);
 void app_show(App& app);
 void app_hide(App& app);
 void app_toggle(App& app);

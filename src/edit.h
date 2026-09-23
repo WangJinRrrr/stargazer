@@ -18,6 +18,10 @@ struct InlineEdit {
     HFONT font = nullptr;
     std::function<void(const std::wstring&)> on_commit;
     std::function<void()> on_cancel;
+    // 视图可能想先处理某些按键（例如 ↓ 从搜索框进网格）。返回 true = 已被消费。
+    std::function<bool(UINT vk)> on_key;
+    // 搜索框用：移焦到网格时提交内容但保留输入框（否则内容会跟输入框一起消失）
+    bool keep_open_on_blur = false;
     bool committing = false;  // 防重入：失焦提交时不再触发取消
 
     // rc 是**物理像素**（子窗口坐标），调用方负责用 Renderer::to_physical 换算

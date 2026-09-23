@@ -16,6 +16,8 @@ LRESULT CALLBACK edit_subclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_P
 
     switch (msg) {
         case WM_KEYDOWN:
+            // 视图先过一遍：方向键等导航键不该被输入框吃掉
+            if (e->on_key && e->on_key(static_cast<UINT>(wp))) return 0;
             if (wp == VK_RETURN) {
                 if (e->on_commit) e->on_commit(e->text());
                 e->close();
@@ -34,7 +36,11 @@ LRESULT CALLBACK edit_subclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_P
             if (e && e->hwnd && !e->committing) {
                 e->committing = true;
                 if (e->on_commit) e->on_commit(e->text());
-                e->close();
+                if (e->keep_open_on_blur) {
+                    // 搜索框：内容已提交，输入框留着（网格抢焦点时不能让它消失）
+                } else {
+                    e->close();
+                }
                 e->committing = false;
                 return 0;
             }
@@ -106,6 +112,7 @@ void InlineEdit::close() {
     }
     on_commit = nullptr;
     on_cancel = nullptr;
+    on_key = nullptr;
 }
 
 std::wstring InlineEdit::text() const {

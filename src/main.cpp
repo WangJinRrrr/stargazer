@@ -51,10 +51,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
         return 1;
     }
 
+    sg::icons_init(app.ctl);
+
+    // 先读数据：app_show 要用已加载的分组与 ui.txt 里的窗口尺寸
+    sg::app_load(app);
     // 开机自启时只驻留托盘，不弹窗、不抢焦点
     if (!has_autostart_flag()) sg::app_show(app);
-
-    sg::icons_init(app.ctl);
 
     MSG msg{};
     while (::GetMessageW(&msg, nullptr, 0, 0) > 0) {
@@ -63,6 +65,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     }
 
     sg::icons_shutdown();
+    sg::app_save_if_dirty(app);
     sg::app_shutdown(app);
     ::CoUninitialize();
     if (once) ::CloseHandle(once);
