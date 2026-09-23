@@ -72,18 +72,24 @@ id \t done \t created \t kind \t text \t attach
 
 判定顺序（**用户不需要做任何选择**）：
 
-1. 剪贴板有 `CF_HDROP` → **逐个路径**看：是图片的就各记一条（`kind=image`，`attach=该路径`）；如果全部都不是图片，则改用**托盘气泡提示**“待办只收文字、链接和图片”，不产生条目（多选拖入多张图 = 多条，比“只看第一个”更符合直觉）。
-3. 剪贴板有位图（`CF_DIB` / `CF_DIBV5`）→ 在工作线程用 WIC 编码成 PNG → `data\images\<id>.png` → **图片（副本）**。
-4. 剪贴板是文本，且去掉首尾空白后以 `http://` 或 `https://` 开头（大小写不敏感）→ **链接**。
-5. 其他文本 → **文字**（原样保留换行）。
+1. 剪贴板有 `CF_HDROP` → **逐个路径**看：是图片的就各记一条（`kind=image`，`attach=该路径`）；如果全部都不是图片，则改用**托盘气泡提示**“待办只收文字、链接和图片”，不产生条目（多选拖入多张图 = 多条）。
+2. 剪贴板是文本，去掉首尾空白后非空 → 以 `http://`/`https://` 开头（大小写不敏感）就是 **link**，否则 **text**。
+   **文本优先于位图**：Excel 复制单元格、Word 复制图文时剪贴板里同时有文本与位图，
+   若位图优先，一个单元格会变成一张图。
+3. 剪贴板有位图（`CF_DIBV5` / `CF_DIB`）→ 在工作线程用 WIC 编码成 PNG → `data\images\<id>.png` → **图片（副本）**。
+4. 什么都没有 → 不动（`Ctrl+V` 粘空剪贴板是常见误操作，不值得提示）。
 
 细节：
 
-- `EDIT` 子控件自己会处理文本粘贴，所以图片/文件的判定必须在它之前：复用 `InlineEdit::on_key` 钩子，在 `Ctrl+V` 上先看剪贴板里有没有位图/文件，有则拦截并走上面流水线；没有则返回 `false`，让 EDIT 自己粘文本。
+- **文本 Ctrl+V 落在输入框里**（可改错字、可多行），**回车才入列**；图片/文件粘贴**直接入列**
+  （它们没法在输入框里编辑）。两类都只多一次回车。
+- `EDIT` 子控件自己会处理文本粘贴，所以图片/文件的判定必须在它之前：复用 `InlineEdit::on_key` 钩子，
+  在 `Ctrl+V` 上先看剪贴板，有文件或位图就自己接管；纯文本则返回 `false`，让 EDIT 自己粘。
 - 图片扩展名白名单（大小写不敏感）：`png jpg jpeg gif bmp webp ico tif tiff`。
 - 位图（截图）落盘时 `text` 留空（行内显示文件名，见 §5）。
+- 位图编码失败时**回滚刚插入的条目** + 托盘气泡（宁可没记上，也不留一条永远提示“图片已不存在”的残条）。
 - 判定函数是**纯函数**（`model/todo_kind`），因此可被 `test_model` 覆盖。
-- 拖入非图片文件同样走第 2 条（气泡提示，不建条目）。
+- 拖入非图片文件同样走第 1 条（气泡提示，不建条目）。
 
 ## 4. 排序与显示顺序
 
@@ -111,17 +117,21 @@ id \t done \t created \t kind \t text \t attach
 |---|---|---|---|
 | text | 自绘复选框 | 文字（多行截断为 2 行） | — |
 | link | 自绘复选框 | URL 文本，**下划线 + 主题强调色** | 点击/回车进默认浏览器 |
-| image | 自绘复选框 | 缩略图（等比缩放进 160×88 逻辑框，居中） | 下方一行小字：`text` 非空则显示它，否则显示副本/引用文件的文件名 |
+| image | 自绘复选框 | 缩略图（等比缩放进 160×88 逻辑框，居中） | **右侧**两行小字：第 1 行显 `text`（空则文件名），失效时第 2 行显“图片已不存在” |
 
 - 已完成条目：整行灰显（`theme.text_dim`）+ 复选框打勾；仍可点击、可删除。
 - 图片缺失（`attach` 指向的文件不存在）→ 该行灰显 + 删除线 + 文案“图片已不存在”（复用收纳盒的失效视觉语言）。
 
 ### 缩略图（预览）
 
-- 用 **`IShellItemImageFactory::GetImage`** 拿系统缩略图（一行调用，且 Windows 自带缩略图缓存），请求尺寸 192×192 物理像素。
-- 在**工作线程 B** 取，得到 BGRA 像素后交给 UI 线程 `make_bitmap`（照搬 `icons.cpp` 的范式：**`WM_PAINT` 里绝不调用 Shell**，取不到就画占位，完成后 `PostMessage` 标脏重绘）。
-- UI 侧 LRU 缓存位图，上限 32 张（约 4.7 MB）；设备丢失时丢弃位图、保留像素（复用现有 `icons_on_device_lost` 的做法，新增 `images_on_device_lost`）。
-  - `ponytail:` 缓存的键是规范化路径、不带 mtime：图片内容极少变，改图后重启即刷新。若出现“改了图预览不变”的抱怨，再把 mtime 拼进键。
+- 用 **`IShellItemImageFactory::GetImage`** 拿系统缩略图（一行调用，且 Windows 自带缩略图缓存），请求 192×192 物理像素；
+  只给 `SIIGBF_THUMBNAILONLY` 失败时退一步只给 `SIIGBF_BIGGERSIZEOK`。
+- 在**自己的缩略图线程**（第三条工作线程，STA）取，得到 BGRA 像素后交给 UI 线程 `make_bitmap`
+  （照搬 `icons.cpp` 的范式：**`WM_PAINT` 里绝不调 Shell**，取不到就画占位，完成后 `PostMessage(WM_APP_IMAGE_READY)` 标脏重绘）。
+- UI 侧 LRU 缓存位图，上限 32 张（约 4.7 MB）；设备丢失时丢弃位图、保留像素。
+  - `ponytail:` 缓存的键是规范化路径、不带 mtime：图片内容极少变，改图后重启即刷新。
+- **取图失败会记入负缓存**，避免每次重绘都重新去问 Shell（断网盘上每次请求可能要等超时）；
+  呼出时清空负缓存，所以“把文件改回来再呼出”能恢复预览。
 - 取缩略图失败（格式怪、网盘断、权限）→ 画扩展名色块占位（复用 `ext_color`），**不弹任何框**。
 - 引用型图片的存在性校验复用 `fs_work` 的 `fs_check_paths`：呼出时投递当前列表里的 `attach` 路径，结果按 path 回填。
   注意：`fs_work` 的回调是单槽设计，且收纳盒也在用它 —— 因此**回调在 app 层统一设置一次**，一次回填 `boxes` 与 `todos` 两边的同路径条目（不新增第二份消费者，保持 `fs_work` 现状）。
@@ -151,8 +161,8 @@ id \t done \t created \t kind \t text \t attach
 | 需求 | 复用什么 | 新增什么 |
 |---|---|---|
 | 剪贴板读 | `clipboard.{h,cpp}`（已有 `CF_HDROP` + 文本 + DropEffect） | 读位图（`CF_DIB`）一个函数 |
-| 图片落盘 | 线程 B 的请求队列与 `WM_APP_FS_OP_DONE` 通知 | 一个 `SaveClipboardImage` 操作（WIC PNG 编码） |
-| 图片预览 | `icons.cpp` 的工作线程 + 缓存 + `make_bitmap` 范式 | `images.{h,cpp}`（`IShellItemImageFactory` + `images_on_device_lost`） |
+| 图片落盘 | 线程 B 的请求队列与 `WM_APP_FS_OP_DONE` 通知 | 一个 `SaveImage` 操作（WIC PNG 编码，见 `png.{h,cpp}`） |
+| 图片预览 | `icons.cpp` 的工作线程 + 缓存 + `make_bitmap` 范式 | `images.{h,cpp}`（`IShellItemImageFactory` + 自己的线程 + LRU + 失败负缓存） |
 | 存在性校验 | `fs_work::fs_check_paths` + 收纳盒的失效回填 | app 层的统一回填（同时喂 boxes 与 todos） |
 | 行格式 | `model/rowformat`（转义/坏行计数） | todo 的 6 字段序列化与解析（改写现有函数） |
 | 文字/链接编辑 | `InlineEdit` | — |

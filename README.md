@@ -1,6 +1,6 @@
 # Stargazer
 
-便携式 Windows 桌面效率工具。**文件收纳盒**已实现（阶段 2）；**浏览**（读本地/网盘目录）正在实现；**待办**尚未实现。
+便携式 Windows 桌面效率工具。三个视图均已实现：**文件收纳盒**、**待办**（随手一记）、**浏览**（读本地/网盘目录）。
 
 > 原设计的“启动板”已按用户决定**彻底删除**（代码与 `data\launcher.txt` 一并移除，无迁移、无备份）：
 > 找文件交给“浏览”，归档交给“收纳盒”，两者合起来取代了启动板的位置。
@@ -29,14 +29,15 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 .\build\Release\test_layout.exe
 ```
 
-`test_model` 覆盖行格式（含 Windows 路径不被误转义的回归）、路径规范化、自然序比较、数据序列化与排序、
-收纳盒/待办的往返与坏行跳过、拖入的容器逻辑（`box_add_paths`、`box_move_item`、盒子重名检查）、BGRA 预乘；
-`test_io` 覆盖 UTF-8 原子读写、目录可写性探测、`CF_HDROP` 构造（逐字节 + 双 NUL）；
-`test_layout` 覆盖共用网格的布局/命中/导航（含“命中不能超出画得出来的行”这条回归）。
+`test_model` 覆盖行格式（含 Windows 路径不被误转义的回归）、路径规范化与上一级路径、自然序比较、
+目录排序与新建文件夹命名、数据序列化与排序、收纳盒/待办（六字段、未知 kind→文字、副本归属）的往返与坏行跳过、
+拖入的容器逻辑（`box_add_paths`、`box_move_item`、盒子重名检查）、BGRA 预乘；
+`test_io` 覆盖 UTF-8 原子读写、目录可写性探测、`CF_HDROP` 构造（逐字节 + 双 NUL）、DIB→PNG 四种变体（24/32bpp × 两种行序）；
+`test_layout` 覆盖共用网格与待办不等高行的布局/命中/导航。
 
 ## 使用
 
-窗口顶部一行视图标签：`收纳盒` / `待办` / `浏览`（后两者尚未实现）。
+窗口顶部一行视图标签：`收纳盒` / `待办` / `浏览`。
 
 - 切换视图：点标签，或 `Ctrl+1..3`，或 `Ctrl+Tab` 循环；上次的视图记在 `ui.txt`；
   首次启动（还没有 `ui.txt`）停在**收纳盒**
@@ -57,6 +58,25 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 
 顶部标题条可拖动移动窗口，四边与四角可缩放（尺寸记在 `ui.txt`）；滚轮滚动网格。
 
+### 待办（随手一记）
+
+一个列表 + 底部常驻输入框。**类型不用选**：粘什么就是什么。
+
+- 打字 / 粘文本 → **回车入列**（文本先落在输入框里，所以还能改错字、贴多行）
+- 粘以 `http://` / `https://` 开头的文本 → **链接**（蓝色带下划线，`Enter` 或双击进默认浏览器）
+- 粘截图（`Win+Shift+S` 等）→ **图片条目**，本体存成 `data\images\<id>.png`（便携，程序搬走图还在）
+- 粘/拖一个磁盘上的图片文件 → **图片引用**（不复制内容；被外部改名/删除后该行灰显加删除线）
+- 剪贴板里同时有文本与位图（Excel 单元格、Word 图文）→ 记成**文字**，不会变成一张图
+- 键盘：`↑↓` 选、`Space` 勾选（沉底灰显）、`Enter` 打开、`Del` 删条目、`F2` 改文字、
+  `Ctrl+C` 复制（图片给 `CF_HDROP`，可粘到资源管理器）、`Ctrl+V` 粘贴、`Ctrl+Shift+D` 清空已完成
+- 右键菜单：打开 / 复制 / 编辑 / 切换完成 / 删除 / 在资源管理器中显示 / 粘贴 / 清空已完成
+- 缩略图用系统缩略图服务，只对可见行取、LRU 32 张；取不到就画占位色块，不弹框
+
+> 待办删条目时**只删自己存在 `data\images\` 里的那份副本**，且只当没有其他条目还在指向它时才删；
+> 引用型的外部图片文件一根手指都不碰。
+
+### 浏览（读本地目录 / 网盘目录）
+
 **不做失焦自动隐藏**：窗口会一直浮在最上层，直到你按 `Esc`、再按一次热键或用托盘菜单关掉。
 这是有意的取舍 —— 否则从资源管理器按住文件往窗口里拖时，窗口会在鼠标按下那一刻就消失。
 
@@ -67,7 +87,7 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 | 文件 | 内容 |
 |---|---|
 | `boxes.txt` | `盒子 \t 名称 \t 路径`（空盒子写一行“盒子名 + 两个空字段”的占位行） |
-| `todo.txt` | 待办（尚未实现） |
+| `todo.txt` | `id \t done \t created \t kind \t text \t attach`（`kind` = `text`/`link`/`image`） |
 | `config.txt` | `键 \t 值`；目前只有 `browse_root`（浏览的根目录，由托盘菜单写入） |
 | `ui.txt` | 窗口尺寸（逻辑像素）、上次视图（`0` 收纳盒 / `1` 待办 / `2` 浏览）、上次盒子 |
 
@@ -90,7 +110,7 @@ UTF-8 编码、无 BOM，行内 Tab 分隔，字段内 `|` `Tab` `换行` 分别
 |---|---|
 | 启动后未呼出（仅托盘） | 11 MB |
 | 隐藏态 | 6 MB |
-| 呼出态（稳态） | 15 MB（阶段 2 加了收纳盒后实测 16–17 MB） |
+| 呼出态（稳态） | 15–17 MB（三个视图都在，含待办缩略图缓存上限约 4.7 MB） |
 | 空闲 CPU | 0 ms / 5 s |
 
 两个关键手法：**懒加载**（面板窗口与 D2D 工厂推迟到首次呼出才建，否则仅驻留托盘就要 37 MB）、
@@ -102,13 +122,14 @@ UTF-8 编码、无 BOM，行内 Tab 分隔，字段内 `|` `Tab` `换行` 分别
 - 无设置界面：热键固定为 `Ctrl+Shift+Space`，配色写死在 `Theme` 结构里
 - 无拼音搜索（子串匹配，中文按码点比较）
 - 无磁盘图标缓存：图标统一按 48×48 提取，进程内 LRU 上限 300 项（约 2.7 MB）
-- 无缩略图、无平滑滚动动画、无鼠标中键呼出
+- 无缩略图（仅列表视图；待办图片行有缩略图）、无平滑滚动动画、无鼠标中键呼出
 - 只支持 `MAX_PATH` 以内的路径
 - 收纳盒：**格子间的排序未实现**（只支持拖到标签换盒）；无搜索过滤框；无多选
 - 收纳盒：拖出只提供 `CF_HDROP`（没有自定义剪贴板格式）；拖出不会删掉本地引用，
   若接收方选了“移动”，该条目会在下次呼出时变成失效项
 - 收纳盒的失效判定是**保守**的：只有明确的“文件/路径不存在”才标失效，断盘、无权限等一律当作存在
-- 待办与浏览视图尚未实现
+- 待办：无截止日期/优先级/提醒/子任务/标签/搜索/拖动排序/多选；一条只能是一种内容
+- 待办：缩略图缓存上限 32 张；同一次呼出期间取不到图的条目不会自动重试（再呼出一次即可）
 - **拖放要求 OLE 初始化**：必须用 `OleInitialize`（只调 `CoInitializeEx` 时 `RegisterDragDrop` 返回
   `0x8007000E`，面板不会是拖放目标，症状是拖动时光标全程显示“禁止”）—— 踩过一次，记在这里
 - `data\*.txt` 若是非 UTF-8 编码（例如被存成 ANSI），程序会备份成 `.bad` 并重新开始，不会静默改写乱码
@@ -123,14 +144,19 @@ src/
   icons.{h,cpp}     Shell 图标三级提取、LRU 缓存、工作线程 A（图标）
   fs_work.{h,cpp}   存在性校验、工作线程 B（文件系统）—— 与图标线程分开，避免慢盘阻塞图标
   edit.{h,cpp}      InlineEdit（原生 EDIT 子控件，中文 IME 免费可用）
+  clipboard.{h,cpp} 剪贴板：路径的 CF_HDROP + 纯文本 + 复制/移动意图（多处共用）
+  png.{h,cpp}       DIB → PNG（WIC，工作线程里给截图落盘）
+  images.{h,cpp}    Shell 缩略图 + LRU + 自己的工作线程（待办图片预览）
   dragdrop.{h,cpp}  IDropTarget（拖入）、IDropSource + CF_HDROP（拖出）
   text_io.{h,cpp}   UTF-8 读写、原子替换
   persist.{h,cpp}   便携数据目录、可写性探测、注册表自启动
   viewapi.h         视图枚举与 AppState
-  views/            grid（共用网格：布局/命中/渲染/导航）、grid_layout（纯布局逻辑，可测）、box
+  views/            grid / grid_layout / todo_layout（纯布局，可测）、box（收纳盒）、browse（浏览）、todo（待办）
   model/            纯数据层，不含任何 Windows 头，可被控制台测试
 ```
 
-设计文档：`docs/superpowers/specs/2026-09-22-stargazer-design.md`
+设计文档：`docs/superpowers/specs/2026-09-22-stargazer-design.md`（总）、
+`docs/superpowers/specs/2026-09-23-stargazer-todo-design.md`（待办）
 实施计划：`docs/superpowers/plans/2026-09-22-stargazer-phase1-kernel-launcher.md`、
-`docs/superpowers/plans/2026-09-22-stargazer-phase2-box.md`
+`docs/superpowers/plans/2026-09-22-stargazer-phase2-box.md`、
+`docs/superpowers/plans/2026-09-23-stargazer-todo.md`
