@@ -5,6 +5,7 @@
 #include <string>
 
 #include "app.h"
+#include "dragdrop.h"  // TEMP(Task 8 删除)：dragdrop_test_invoke
 #include "fs_work.h"
 #include "icons.h"
 
@@ -18,6 +19,23 @@ bool has_autostart_flag() {
     for (int i = 1; i < argc; ++i) {
         if (::_wcsicmp(argv[i], L"--autostart") == 0) {
             found = true;
+            break;
+        }
+    }
+    ::LocalFree(argv);
+    return found;
+}
+
+// TEMP(Task 8 删除)：--drop-test <path> 启动后直接调一次拖入回调，
+// 用来验证“拖入按当前视图分发”这段粘连代码（OLE 拖放无法在脚本里模拟）。
+std::wstring drop_test_path() {
+    int argc = 0;
+    LPWSTR* argv = ::CommandLineToArgvW(::GetCommandLineW(), &argc);
+    if (!argv) return std::wstring();
+    std::wstring found;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (::_wcsicmp(argv[i], L"--drop-test") == 0) {
+            found = argv[i + 1];
             break;
         }
     }
@@ -63,6 +81,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     sg::app_load(app);
     // 开机自启时只驻留托盘，不弹窗、不抢焦点
     if (!has_autostart_flag()) sg::app_show(app);
+
+    // TEMP(Task 8 删除)
+    const std::wstring drop_test = drop_test_path();
+    if (!drop_test.empty()) sg::dragdrop_test_invoke({ drop_test });
 
     MSG msg{};
     while (::GetMessageW(&msg, nullptr, 0, 0) > 0) {

@@ -164,11 +164,20 @@ bool ensure_panel(App& app) {
     dragdrop_init(app.panel);
     dragdrop_set_hook([&app](const std::vector<std::wstring>& paths) {
         AppState& s = app.state;
-        if (s.groups.empty()) s.groups.push_back(LaunchGroup{ L"常用", {} });
-        const int gi = std::clamp(s.launcher.group, 0, static_cast<int>(s.groups.size()) - 1);
-        for (const auto& p : paths) s.groups[gi].items.push_back(item_from_path(p));
-        s.data_dirty = true;
-        launcher_refilter(s);
+        if (s.view == View::Box) {
+            // 拖入进当前盒子。不去重：同一文件在多个盒子里、或同盒重复都存在合法用法
+            if (box_add_paths(s.boxes, s.box_view.box, paths) > 0) s.data_dirty = true;
+            box_clamp(s, app.render.client_logical());
+        } else if (s.view == View::Launcher) {
+            if (s.groups.empty()) s.groups.push_back(LaunchGroup{ L"常用", {} });
+            const int gi =
+                std::clamp(s.launcher.group, 0, static_cast<int>(s.groups.size()) - 1);
+            for (const auto& p : paths) s.groups[gi].items.push_back(item_from_path(p));
+            s.data_dirty = true;
+            launcher_refilter(s);
+        } else {
+            return;  // Todo / Explorer 还没实现，先不动数据
+        }
         ::InvalidateRect(app.panel, nullptr, FALSE);
     });
     return true;

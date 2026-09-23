@@ -246,6 +246,38 @@ static void test_boxes_ghost_lines() {
     }
 }
 
+// 拖入分发（Review Focus 5）：同一路径允许重复添加，不自动去重；
+// 重复添加后每条都能单独删除（按条删，不按路径删），不会产生删不掉的项。
+static void test_box_add_paths() {
+    // ① boxes 为空时先建盒子（拖到空界面也应能用）
+    std::vector<sg::Box> boxes;
+    const size_t n1 = sg::box_add_paths(boxes, 0, { L"C:\\Windows\\notepad.exe" });
+    CHECK_EQ(n1, size_t{1});
+    CHECK_EQ(boxes.size(), size_t{1});
+    CHECK_EQ(boxes[0].items.size(), size_t{1});
+    CHECK_EQ(boxes[0].items[0].name, std::wstring(L"notepad.exe"));  // 显示名 = 文件名
+    CHECK_EQ(boxes[0].items[0].path, std::wstring(L"C:\\Windows\\notepad.exe"));
+
+    // ② 同一盒子内重复添加：两条独立条目，各自可删
+    const size_t n2 = sg::box_add_paths(boxes, 0, { L"C:\\Windows\\notepad.exe" });
+    CHECK_EQ(n2, size_t{1});
+    CHECK_EQ(boxes[0].items.size(), size_t{2});
+    boxes[0].items.erase(boxes[0].items.begin());
+    CHECK_EQ(boxes[0].items.size(), size_t{1});  // 删掉一条，另一条还在
+
+    // ③ 同一路径进两个盒子：互不影响
+    boxes.push_back(sg::Box{ L"网盘", {} });
+    const size_t n3 = sg::box_add_paths(boxes, 1, { L"D:\\\u7f51\u76d8\\Movies", L"" });
+    CHECK_EQ(n3, size_t{1});  // 空路径被跳过
+    CHECK_EQ(boxes[1].items.size(), size_t{1});
+    CHECK_EQ(boxes[0].items.size(), size_t{1});  // 另一个盒子不动
+
+    // ④ 越界下标夹紧到最后一个盒子，而不是崩或丢
+    const size_t n4 = sg::box_add_paths(boxes, 99, { L"C:\\a.txt" });
+    CHECK_EQ(n4, size_t{1});
+    CHECK_EQ(boxes[1].items.size(), size_t{2});
+}
+
 static void test_todos_roundtrip_and_sort() {
     std::vector<sg::TodoItem> todos;
     todos.push_back({ 1, false, 100, 0, 0, L"普通" });
@@ -330,6 +362,7 @@ int main() {
     test_boxes_roundtrip();
     test_empty_box_roundtrip();
     test_boxes_ghost_lines();
+    test_box_add_paths();
     test_todos_roundtrip_and_sort();
     test_config();
     test_premultiply_bgra();

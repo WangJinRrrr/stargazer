@@ -138,4 +138,8 @@ void dragdrop_set_hook(std::function<void(const std::vector<std::wstring>&)> hoo
 
 void dragdrop_set_drag_flag(bool* flag) { g_in_drag = flag; }
 
+void dragdrop_test_invoke(const std::vector<std::wstring>& paths) {
+    if (g_hook) g_hook(paths);
+}
+
 }  // namespace sg

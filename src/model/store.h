@@ -50,6 +50,12 @@ std::vector<LaunchGroup> parse_launcher(const std::wstring& text, int& bad);
 std::wstring serialize_boxes(const std::vector<Box>& boxes);
 std::vector<Box> parse_boxes(const std::wstring& text, int& bad);
 
+// 把一批绝对路径加进第 box_index 个盒子（显示名取文件名），返回实际添加的条数。
+// 不去重：同一文件可以在多个盒子里，也可以在一个盒子里重复出现（都是合法用法）。
+// boxes 为空时先建一个“新盒子”——返回值只看条目数，不反映是否新建了盒子。
+size_t box_add_paths(std::vector<Box>& boxes, int box_index,
+                     const std::vector<std::wstring>& paths);
+
 // 行格式：id \t done \t created \t due \t prio \t text
 std::wstring serialize_todos(const std::vector<TodoItem>& todos);
 std::vector<TodoItem> parse_todos(const std::wstring& text, int& bad);

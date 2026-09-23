@@ -22,4 +22,8 @@ void dragdrop_set_hook(std::function<void(const std::vector<std::wstring>&)> hoo
 // 把 App::in_drag 的地址交给拖放层；外部拖拽悬停期间为 true（抑制悬停高亮更新）
 void dragdrop_set_drag_flag(bool* flag);
 
+// TEMP(Task 8 删除)：直接调用已注册的拖入回调，用来在无法模拟 OLE 拖放的环境里
+// 验证“拖入按当前视图分发”这段粘连代码。
+void dragdrop_test_invoke(const std::vector<std::wstring>& paths);
+
 }  // namespace sg

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cwchar>
 
+#include "model/paths.h"  // file_name（拖入时的显示名）
 #include "model/rowformat.h"
 
 namespace sg {
@@ -77,6 +78,23 @@ std::vector<Box> parse_boxes(const std::wstring& text, int& bad) {
         if (!placeholder) b->items.push_back(BoxItem{ r[1], r[2] });
     }
     return boxes;
+}
+
+size_t box_add_paths(std::vector<Box>& boxes, int box_index,
+                     const std::vector<std::wstring>& paths) {
+    if (boxes.empty()) boxes.push_back(Box{ L"新盒子", {} });
+    const int bi = box_index < 0 ? 0
+                                 : (box_index >= static_cast<int>(boxes.size())
+                                        ? static_cast<int>(boxes.size()) - 1
+                                        : box_index);
+    auto& items = boxes[bi].items;
+    size_t added = 0;
+    for (const auto& p : paths) {
+        if (p.empty()) continue;  // 空路径不能变成删不掉的幽灵条目
+        items.push_back(BoxItem{ file_name(p), p });
+        ++added;
+    }
+    return added;
 }
 
 static long long to_ll(const std::wstring& s) {
