@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #include "views/grid.h"
+#include "views/todo_layout.h"
 
 using namespace sg;  // 测试里直接写 kPad/kTabsH/grid_hittest
 
@@ -95,10 +96,63 @@ static void test_keydown_navigation() {
     CHECK(!sg::grid_keydown(gl, count, sel, scroll, VK_F5));  // 不认识的键不消费
 }
 
+// 待办列表是不等高行（文字 28 / 图片 96）：前缀和必须精确
+static void test_todo_row_offsets() {
+    using sg::TodoKind;
+    CHECK_EQ(sg::todo_row_height(TodoKind::Text), 28.f);
+    CHECK_EQ(sg::todo_row_height(TodoKind::Link), 28.f);
+    CHECK_EQ(sg::todo_row_height(TodoKind::Image), 96.f);
+
+    const std::vector<TodoKind> kinds = { TodoKind::Text, TodoKind::Image, TodoKind::Text };
+    const std::vector<float> off = sg::todo_row_offsets(kinds);
+    CHECK_EQ(off.size(), size_t{4});
+    CHECK_EQ(off[0], 0.f);
+    CHECK_EQ(off[1], 28.f);
+    CHECK_EQ(off[2], 124.f);  // 28 + 96
+    CHECK_EQ(off[3], 152.f);  // + 28
+
+    // 命中：行内任意 y 都落在该行；正好在边界上算下一行
+    CHECK_EQ(sg::todo_row_at(off, 0.f), 0);
+    CHECK_EQ(sg::todo_row_at(off, 27.9f), 0);
+    CHECK_EQ(sg::todo_row_at(off, 28.f), 1);
+    CHECK_EQ(sg::todo_row_at(off, 123.9f), 1);
+    CHECK_EQ(sg::todo_row_at(off, 124.f), 2);
+    CHECK_EQ(sg::todo_row_at(off, 151.9f), 2);
+    CHECK_EQ(sg::todo_row_at(off, 152.f), -1);  // 列表下方空白
+    CHECK_EQ(sg::todo_row_at(off, -1.f), -1);
+
+    // 空列表
+    CHECK_EQ(sg::todo_row_offsets({}).size(), size_t{1});
+    CHECK_EQ(sg::todo_row_at(sg::todo_row_offsets({}), 5.f), -1);
+}
+
+static void test_todo_scroll_clamp_and_visibility() {
+    using sg::TodoKind;
+    std::vector<TodoKind> kinds(10, TodoKind::Text);  // 10 行 × 28 = 280
+    const std::vector<float> off = sg::todo_row_offsets(kinds);
+    const float viewport = 100.f;  // 只能看到约 3.5 行
+
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 0.f, -1), 0.f);  // 没选中：不动
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 0.f, 0), 0.f);   // 第 0 行本来就在视野里
+    // 第 5 行是 140..168：让它的底贴住视口底 → 168 - 100 = 68
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 0.f, 5), 68.f);
+    // 第 1 行是 28..56：向上只需要滚到它的上边（最小位移，不必回到 0）
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 200.f, 1), 28.f);
+    // 选中在上面 → 滚回去（同一条规则的另一个例子）
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 68.f, 1), 28.f);
+    // 没选中（sel<0）时不做可见性调整，但**仍然夹紧**：999 > 总高-视口 → 180
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 999.f, -1), 180.f);
+    CHECK_EQ(sg::todo_scroll_for(off, viewport, 999.f, 9), 180.f);  // 280 - 100
+    // 视口比内容还高：scroll 只能是 0
+    CHECK_EQ(sg::todo_scroll_for(off, 1000.f, 50.f, 9), 0.f);
+}
+
 int main() {
     test_hittest_stops_at_last_visible_row();
     test_hittest_matches_cells();
     test_keydown_navigation();
+    test_todo_row_offsets();
+    test_todo_scroll_clamp_and_visibility();
     if (g_failed == 0) {
         std::printf("OK: test_layout 全部通过\n");
         return 0;

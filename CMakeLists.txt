@@ -31,7 +31,7 @@ add_executable(test_io tests/test_io.cpp
 target_include_directories(test_io PRIVATE src)
 target_link_libraries(test_io PRIVATE shell32 ole32 advapi32 windowscodecs)
 
-add_executable(test_layout tests/test_layout.cpp src/views/grid_layout.cpp)
+add_executable(test_layout tests/test_layout.cpp src/views/grid_layout.cpp src/views/todo_layout.cpp)
 target_include_directories(test_layout PRIVATE src)
 
 set(SG_SOURCES
@@ -47,6 +47,7 @@ set(SG_SOURCES
   src/png.cpp
   src/views/grid.cpp
   src/views/grid_layout.cpp
+  src/views/todo_layout.cpp
   src/views/box.cpp
   src/views/browse.cpp
   src/dragdrop.cpp
