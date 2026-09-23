@@ -11,7 +11,11 @@ Add-Type -AssemblyName System.Drawing
 $bg      = [System.Drawing.Color]::FromArgb(255, 0x20, 0x20, 0x20)  # Theme::bg
 $accent  = [System.Drawing.Color]::FromArgb(255, 0x60, 0xCD, 0xFF)  # Theme::accent
 $sizes   = @(16, 24, 32, 48, 64, 128, 256)
-$pngAt   = 128   # 这个尺寸及以上用 PNG 压缩（Vista+ 支持；小尺寸用经典 BMP 更保险）
+# 这个尺寸及以上用 PNG 压缩（Vista+ 支持；小尺寸用经典 BMP 更保险）。
+# 阈值定在 64 而不是 128：64px 那份是未压缩 BMP，一个尺寸就要 16.5 KB ——
+# 而 Windows 几乎不直接取 64（它按 16/32/48/256 拿，缺了会缩放），
+# 换成 PNG 后整个 ico 从 39.6 KB 降到 ~25 KB，尺寸一个没少。
+$pngAt   = 64
 
 # 星形顶点：外半径 outer、内半径 inner，顶点朝上；n=5 五角星，n=4 四角星
 function New-Star([float]$cx, [float]$cy, [float]$outer, [float]$inner, [int]$n, [float]$rot) {  $pts = New-Object 'System.Drawing.PointF[]' ($n * 2)
