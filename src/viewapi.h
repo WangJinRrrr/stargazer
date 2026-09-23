@@ -45,6 +45,19 @@ struct BrowseState {
     InlineEdit path_edit;
 };
 
+// 待办视图状态。列表是不等高行（文字 28 / 图片 96），offsets 是行偏移前缀和，
+// 渲染与命中都用它（不另算一份）。
+struct TodoState {
+    int sel = -1;
+    int hover = -1;
+    float scroll = 0.f;                 // 像素
+    std::vector<TodoKind> kinds;        // 与 AppState::todos 同序（已排序）
+    std::vector<float> offsets;         // 行偏移前缀和
+    InlineEdit input;                   // 底部常驻输入框（新增条目）
+    InlineEdit edit;                    // F2 改文字（临时叠在行上）
+    long long pending_image_id = 0;     // 正在落盘的图片条目 id（0 = 无），失败时回滚它
+};
+
 struct AppState {
     std::vector<Box> boxes;
     std::vector<TodoItem> todos;
@@ -52,6 +65,7 @@ struct AppState {
     int bad_lines = 0;
     View view = View::Box;  // 首次启动（ui.txt 还没有记录时）停在收纳盒
     BoxState box_view;
+    TodoState todo;
     BrowseState browse;
     bool data_dirty = false;
     // ui.txt 里想要的窗口尺寸（逻辑像素）。0 = 用默认值。

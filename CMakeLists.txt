@@ -50,6 +50,7 @@ set(SG_SOURCES
   src/views/todo_layout.cpp
   src/views/box.cpp
   src/views/browse.cpp
+  src/views/todo.cpp
   src/dragdrop.cpp
 )
 

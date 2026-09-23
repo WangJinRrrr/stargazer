@@ -14,6 +14,7 @@
 #include "text_io.h"
 #include "views/box.h"
 #include "views/browse.h"
+#include "views/todo.h"
 
 #include <shobjidl.h>  // IFileDialog（托盘菜单选浏览目录）
 
@@ -239,6 +240,10 @@ static void app_set_view(App& app, View v) {
         ::SetFocus(app.panel);  // 网格视图自己收键盘，不需要子控件
         box_request_check(app);  // 切进来也要校验，否则失效标记是上一次的
     }
+    if (v == View::Todo) {
+        todo_rebuild_layout(s, app.render.client_logical());
+        todo_sync_input(app);
+    }
     if (v == View::Browse) {
         browse_activate(app);
     }
@@ -348,6 +353,11 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app->state.view == View::Box) {
                 app->state.box_view.scroll = std::max(0, app->state.box_view.scroll + step);
                 box_clamp(app->state, app->render.client_logical());
+            } else if (app->state.view == View::Todo) {
+                TodoState& t = app->state.todo;
+                const D2D1_RECT_F tl = todo_list_rect(app->render.client_logical());
+                t.scroll -= static_cast<float>(step) * 3.f * kTodoRowTextH;
+                t.scroll = todo_scroll_for(t.offsets, tl.bottom - tl.top, t.scroll, t.sel);
             } else if (app->state.view == View::Browse) {
                 BrowseState& b = app->state.browse;
                 b.scroll = std::max(0, b.scroll + step);
@@ -375,6 +385,9 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 switch (app->state.view) {
                     case View::Box:
                         box_render(*app);
+                        break;
+                    case View::Todo:
+                        todo_render(*app);
                         break;
                     case View::Browse:
                         browse_render(*app);
@@ -447,7 +460,22 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
 
             if (app->state.view != View::Box) {
-                // 浏览：悬停高亮 + 滚轮（键盘归列表，不需子控件）
+                // 待办：悬停高亮
+                if (app->state.view == View::Todo) {
+                    TodoState& t = app->state.todo;
+                    const int th = todo_hittest(*app, lpt);
+                    if (th != t.hover) {
+                        t.hover = th;
+                        if (!app->mouse_tracking) {
+                            TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
+                            ::TrackMouseEvent(&tme);
+                            app->mouse_tracking = true;
+                        }
+                        ::InvalidateRect(hwnd, nullptr, FALSE);
+                    }
+                    return 0;
+                }
+                // 浏览：悬停高亮（键盘归列表，不需子控件）
                 if (app->state.view == View::Browse) {
                     const int bh = browse_row_hittest(app->state, cs, lpt);
                     if (bh != app->state.browse.hover) {
@@ -496,6 +524,13 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const int vt = view_tab_hittest(cs, lpt);
             if (vt >= 0) {
                 app_set_view(*app, static_cast<View>(vt));
+                return 0;
+            }
+            if (app->state.view == View::Todo) {
+                const int row = todo_hittest(*app, lpt);
+                app->state.todo.sel = row;  // 点空白处 = 取消选中（复选框/双击在 Task 5）
+                if (row >= 0) ::SetFocus(hwnd);
+                ::InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
             if (app->state.view == View::Browse) {
@@ -613,6 +648,20 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         }
+        case WM_CHAR: {
+            // 在列表里打字就回到输入框继续记（列表本身不收文本）
+            if (!app) return 0;
+            if (app->state.view != View::Todo) return 0;
+            const wchar_t ch = static_cast<wchar_t>(wp);
+            TodoState& t = app->state.todo;
+            if (ch >= 0x20 && ch != 0x7F) {
+                if (!t.input.is_open()) todo_sync_input(*app);
+                t.sel = -1;
+                t.input.focus();
+                ::PostMessageW(t.input.hwnd, WM_CHAR, wp, lp);
+            }
+            return 0;
+        }
         case WM_KEYDOWN: {
             if (!app) return 0;
             if (wp == VK_ESCAPE) {
@@ -622,6 +671,8 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app_view_hotkey(*app, static_cast<UINT>(wp))) return 0;
             if (app->state.view == View::Box) {
                 box_keydown(*app, static_cast<UINT>(wp));
+            } else if (app->state.view == View::Todo) {
+                todo_keydown(*app, static_cast<UINT>(wp));
             } else if (app->state.view == View::Browse) {
                 browse_keydown(*app, static_cast<UINT>(wp));
             }
@@ -659,6 +710,19 @@ void app_load(App& app) {
         int bad = 0;
         s.boxes = parse_boxes(boxes_text, bad);
         s.bad_lines += bad;
+    }
+
+    // 待办：同一套读法（存在但读不出来 → 先备份 .bad），同样用独立字符串接内容
+    std::wstring todos_text;
+    if (data_file_exists(app.paths, L"todo.txt") &&
+        !load_text(app.paths, L"todo.txt", todos_text)) {
+        backup_bad(app.paths, L"todo.txt");
+        ++s.bad_lines;
+    } else if (!todos_text.empty()) {
+        int bad = 0;
+        s.todos = parse_todos(todos_text, bad);
+        s.bad_lines += bad;
+        sort_todos(s.todos);
     }
 
     if (load_text(app.paths, L"config.txt", text)) {
@@ -710,7 +774,8 @@ void app_save_if_dirty(App& app) {
     s.data_dirty = false;
     // 分开写：一个文件写失败不该让另一个文件连尝试都没有（评审 minor）
     const bool box_ok = save_text(app.paths, L"boxes.txt", serialize_boxes(s.boxes));
-    if (!box_ok) {
+    const bool todo_ok = save_text(app.paths, L"todo.txt", serialize_todos(s.todos));
+    if (!box_ok || !todo_ok) {
         ::MessageBoxW(app.ctl, L"保存失败：程序目录可能已变为不可写。", L"Stargazer",
                       MB_ICONWARNING);
     }
@@ -769,6 +834,10 @@ void app_show(App& app) {
     } else if (s.view == View::Browse) {
         ::SetFocus(app.panel);
         browse_activate(app);  // 首路径从 config 的 browse_root 取（空则用 exe 目录）并枚举
+    } else if (s.view == View::Todo) {
+        todo_rebuild_layout(s, app.render.client_logical());
+        todo_sync_input(app);
+        s.todo.input.focus();
     } else {
         ::SetFocus(app.panel);  // 其他视图自己收键盘
     }
@@ -780,6 +849,8 @@ void app_hide(App& app) {
     app_save_if_dirty(app);  // 用户改完就切走很自然，落盘不能等退出
     app.state.box_view.edit.close();  // 悬空的输入框比看不见的窗口更让人困惑
     app.state.browse.path_edit.close();
+    app.state.todo.input.close();
+    app.state.todo.edit.close();
     ::ShowWindow(app.panel, SW_HIDE);
     // 隐藏时把绘制表面还给系统：150% 缩放下 1440x930 的表面本身就有 5MB+。
     // 复用设备丢失那条路径，下次 begin() 会自动重建。
