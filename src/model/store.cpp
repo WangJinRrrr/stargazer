@@ -97,6 +97,18 @@ size_t box_add_paths(std::vector<Box>& boxes, int box_index,
     return added;
 }
 
+bool box_move_item(std::vector<Box>& boxes, int src_box, int index, int dst_box) {
+    if (src_box < 0 || src_box >= static_cast<int>(boxes.size())) return false;
+    if (dst_box < 0 || dst_box >= static_cast<int>(boxes.size())) return false;
+    if (src_box == dst_box) return false;
+    auto& src = boxes[src_box].items;
+    if (index < 0 || index >= static_cast<int>(src.size())) return false;
+    BoxItem moved = src[index];
+    src.erase(src.begin() + index);
+    boxes[dst_box].items.push_back(std::move(moved));
+    return true;
+}
+
 static long long to_ll(const std::wstring& s) {
     return static_cast<long long>(std::wcstoll(s.c_str(), nullptr, 10));
 }

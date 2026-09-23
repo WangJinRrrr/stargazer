@@ -56,6 +56,10 @@ std::vector<Box> parse_boxes(const std::wstring& text, int& bad);
 size_t box_add_paths(std::vector<Box>& boxes, int box_index,
                      const std::vector<std::wstring>& paths);
 
+// 把一个条目从 src_box 移到 dst_box（拖到别的盒子标签）。
+// 越界、同盒、空列表一律不动并返回 false，调用方不必先自查。
+bool box_move_item(std::vector<Box>& boxes, int src_box, int index, int dst_box);
+
 // 行格式：id \t done \t created \t due \t prio \t text
 std::wstring serialize_todos(const std::vector<TodoItem>& todos);
 std::vector<TodoItem> parse_todos(const std::wstring& text, int& bad);

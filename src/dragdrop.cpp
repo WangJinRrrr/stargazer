@@ -2,7 +2,7 @@
 
 #include <ole2.h>
 #include <shellapi.h>
-#include <shlobj.h>  // DROPFILES（定义在 shlobj_core.h）
+#include <shlobj.h>  // DROPFILES 与 SHCreateStdEnumFmtEtc（都在 shlobj_core.h）
 
 namespace sg {
 namespace {
@@ -81,6 +81,107 @@ private:
 
 DropTarget* g_target = nullptr;
 
+// 拖出的数据源：只提供 CF_HDROP（与资源管理器互通靠的正是这个格式）。
+// 手写而不是用 SHCreateDataObject：后者对“来自不同目录的多个路径”还要给父目录 PIDL，
+// 反而比这几十行更绕。
+class HdropDataObject : public IDataObject {
+public:
+    explicit HdropDataObject(HGLOBAL hdrop) : hdrop_(hdrop) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
+        if (!out) return E_POINTER;
+        if (iid == IID_IUnknown || iid == IID_IDataObject) {
+            *out = static_cast<IDataObject*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const ULONG n = --refs_;
+        if (n == 0) {
+            if (hdrop_) ::GlobalFree(hdrop_);
+            delete this;
+        }
+        return n;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetData(FORMATETC* fe, STGMEDIUM* stg) override {
+        if (!fe || !stg) return E_POINTER;
+        if (fe->cfFormat != CF_HDROP || (fe->tymed & TYMED_HGLOBAL) == 0) return DV_E_FORMATETC;
+        if (!hdrop_) return E_UNEXPECTED;
+        // 所有权转移给调用方
+        stg->tymed = TYMED_HGLOBAL;
+        stg->hGlobal = hdrop_;
+        stg->pUnkForRelease = nullptr;
+        hdrop_ = nullptr;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* fe) override {
+        if (!fe) return E_POINTER;
+        return (fe->cfFormat == CF_HDROP && (fe->tymed & TYMED_HGLOBAL) != 0) ? S_OK
+                                                                             : DV_E_FORMATETC;
+    }
+    HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC*, STGMEDIUM*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC*, FORMATETC* out) override {
+        if (out) out->ptd = nullptr;
+        return E_NOTIMPL;  // 只有一种格式，谈不上“等价格式”
+    }
+    HRESULT STDMETHODCALLTYPE SetData(FORMATETC*, STGMEDIUM*, BOOL) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD dir, IEnumFORMATETC** out) override {
+        if (!out) return E_POINTER;
+        if (dir != DATADIR_GET) return E_NOTIMPL;
+        FORMATETC fe{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+        return ::SHCreateStdEnumFmtEtc(1, &fe, out);
+    }
+    HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override {
+        return OLE_E_ADVISENOTSUPPORTED;
+    }
+    HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override {
+        return OLE_E_ADVISENOTSUPPORTED;
+    }
+
+private:
+    ULONG refs_ = 1;
+    HGLOBAL hdrop_ = nullptr;
+};
+
+// 拖出的源：只关心左键是否松开与 Esc 是否按下（其余交给系统默认光标反馈）
+class DropSource : public IDropSource {
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
+        if (!out) return E_POINTER;
+        if (iid == IID_IUnknown || iid == IID_IDropSource) {
+            *out = static_cast<IDropSource*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const ULONG n = --refs_;
+        if (n == 0) delete this;
+        return n;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryContinueDrag(BOOL escape, DWORD key_state) override {
+        if (escape) return DRAGDROP_S_CANCEL;
+        if ((key_state & MK_LBUTTON) == 0) return DRAGDROP_S_DROP;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD) override {
+        return DRAGDROP_S_USEDEFAULTCURSORS;
+    }
+
+private:
+    ULONG refs_ = 1;
+};
+
 }  // namespace
 
 HGLOBAL make_hdrop(const std::vector<std::wstring>& paths) {
@@ -140,6 +241,24 @@ void dragdrop_set_drag_flag(bool* flag) { g_in_drag = flag; }
 
 void dragdrop_test_invoke(const std::vector<std::wstring>& paths) {
     if (g_hook) g_hook(paths);
+}
+
+bool dragdrop_begin_drag(HWND owner, const std::vector<std::wstring>& paths) {
+    (void)owner;  // DoDragDrop 不需要 owner 窗口
+    if (paths.empty()) return false;
+
+    HGLOBAL h = make_hdrop(paths);
+    if (!h) return false;
+
+    auto* obj = new HdropDataObject(h);  // 接管内存块所有权，Release 时负责释放
+    auto* src = new DropSource();
+    DWORD effect = 0;
+    // DoDragDrop 跑嵌套消息循环，期间会重入 WM_PAINT：
+    // 调用方（app 层）用 in_drag 抑制悬停更新，并在返回后复位
+    const HRESULT hr = ::DoDragDrop(obj, src, DROPEFFECT_COPY | DROPEFFECT_MOVE, &effect);
+    obj->Release();
+    src->Release();
+    return SUCCEEDED(hr) && hr != DRAGDROP_S_CANCEL;
 }
 
 }  // namespace sg

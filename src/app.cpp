@@ -365,6 +365,44 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             if (app->in_drag) return 0;  // 外部 OLE 拖拽悬停中，不高亮悬停项
 
+            // 盒内拖拽中：高亮目标盒子标签；鼠标离开窗口就转成 OLE 拖出
+            if (app->state.view == View::Box && app->internal_drag) {
+                bool changed = false;
+                const int over = box_tab_hittest(app->state, cs, lpt);
+                if (over != app->state.box_view.drag_over_tab) {
+                    app->state.box_view.drag_over_tab = over;
+                    changed = true;
+                }
+                const bool outside = lpt.x < 0.f || lpt.y < 0.f || lpt.x >= cs.width ||
+                                     lpt.y >= cs.height;
+                if (outside) {
+                    // 拖出到外部（资源管理器等）：走 OLE，提供 CF_HDROP。
+                    // 拖出只给路径，**不删本地的引用**（目标自己决定复制还是移动）。
+                    const BoxState& bs = app->state.box_view;
+                    std::wstring path;
+                    if (!app->state.boxes.empty() && bs.box >= 0 &&
+                        bs.box < static_cast<int>(app->state.boxes.size())) {
+                        const auto& items = app->state.boxes[bs.box].items;
+                        if (app->drag_from >= 0 && app->drag_from < static_cast<int>(items.size())) {
+                            path = items[app->drag_from].path;
+                        }
+                    }
+                    app->internal_drag = false;
+                    app->drag_from = -1;
+                    app->state.box_view.drag_over_tab = -1;
+                    ::ReleaseCapture();
+                    if (!path.empty()) {
+                        app->in_drag = true;  // 抑制拖放期间的悬停更新
+                        dragdrop_begin_drag(hwnd, { path });
+                        app->in_drag = false;
+                    }
+                    ::InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
+                if (changed) ::InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+
             int hit = -1;
             int& hover = (app->state.view == View::Box) ? app->state.box_view.hover
                                                         : app->state.launcher.hover;
@@ -428,7 +466,13 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 const int hit = box_hittest(*app, lpt);
                 app->state.box_view.sel = hit;  // 点空白处 = 回到无选中态
-                if (hit >= 0) ::SetFocus(hwnd);
+                if (hit >= 0) {
+                    ::SetFocus(hwnd);
+                    // 内部拖拽状态：拖到别的盒子标签上换盒，拖出窗口则转成 OLE 拖出
+                    app->internal_drag = true;
+                    app->drag_from = hit;
+                    ::SetCapture(hwnd);
+                }
                 ::InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
@@ -461,6 +505,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 app->internal_drag = false;
                 app->drag_from = -1;
                 app->state.launcher.drag_over_tab = -1;
+                app->state.box_view.drag_over_tab = -1;
                 ::InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
@@ -468,11 +513,21 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app && app->internal_drag) {
                 app->internal_drag = false;
                 ::ReleaseCapture();
-                if (app->state.launcher.drag_over_tab >= 0) {
+                if (app->state.view == View::Box) {
+                    const int dst = app->state.box_view.drag_over_tab;
+                    if (dst >= 0 && app->drag_from >= 0 &&
+                        box_move_item(app->state.boxes, app->state.box_view.box, app->drag_from,
+                                      dst)) {
+                        app->state.data_dirty = true;
+                        app->state.box_view.sel = -1;
+                        box_clamp(app->state, app->render.client_logical());
+                    }
+                } else if (app->state.launcher.drag_over_tab >= 0) {
                     launcher_move_item_to_group(app->state, app->drag_from,
                                                 app->state.launcher.drag_over_tab);
                 }
                 app->state.launcher.drag_over_tab = -1;
+                app->state.box_view.drag_over_tab = -1;
                 app->drag_from = -1;
                 ::InvalidateRect(hwnd, nullptr, FALSE);
             }

@@ -278,6 +278,30 @@ static void test_box_add_paths() {
     CHECK_EQ(boxes[1].items.size(), size_t{2});
 }
 
+// 拖到盒子标签换盒：条目换盒后两边都能正常显示，越界/同盒不产生副作用
+static void test_box_move_item() {
+    std::vector<sg::Box> boxes(2);
+    boxes[0].name = L"A";
+    boxes[1].name = L"B";
+    boxes[0].items.push_back({ L"one", L"C:\\1.txt" });
+    boxes[0].items.push_back({ L"two", L"C:\\2.txt" });
+
+    CHECK(sg::box_move_item(boxes, 0, 1, 1));  // 移第二条：用非 0 下标才能抓到“删错下标”
+    CHECK_EQ(boxes[0].items.size(), size_t{1});
+    CHECK_EQ(boxes[0].items[0].name, std::wstring(L"one"));  // 留下的必须是第一条
+    CHECK_EQ(boxes[1].items.size(), size_t{1});
+    CHECK_EQ(boxes[1].items[0].path, std::wstring(L"C:\\2.txt"));
+    CHECK_EQ(boxes[1].items[0].name, std::wstring(L"two"));  // 名字随条目一起走
+
+    // 同盒 / 越界：不动
+    CHECK(!sg::box_move_item(boxes, 0, 0, 0));
+    CHECK(!sg::box_move_item(boxes, 0, 5, 1));
+    CHECK(!sg::box_move_item(boxes, 0, 0, 9));
+    CHECK(!sg::box_move_item(boxes, -1, 0, 1));
+    CHECK_EQ(boxes[0].items.size(), size_t{1});
+    CHECK_EQ(boxes[1].items.size(), size_t{1});
+}
+
 static void test_todos_roundtrip_and_sort() {
     std::vector<sg::TodoItem> todos;
     todos.push_back({ 1, false, 100, 0, 0, L"普通" });
@@ -363,6 +387,7 @@ int main() {
     test_empty_box_roundtrip();
     test_boxes_ghost_lines();
     test_box_add_paths();
+    test_box_move_item();
     test_todos_roundtrip_and_sort();
     test_config();
     test_premultiply_bgra();
