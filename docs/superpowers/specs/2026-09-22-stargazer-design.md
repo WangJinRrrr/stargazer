@@ -111,7 +111,16 @@ tests/
 
 **单实例**：`CreateMutexW(L"Local\\stargazer")`；已存在则 `FindWindowW` 找到主窗口，`PostMessage(WM_APP_SHOW)`，自身退出。
 
-**主窗口**：单一窗口类，`WS_POPUP` 无边框。圆角用 Win11 的 `DWMWA_WINDOW_CORNER_PREFERENCE`；Win10 上为直角。标题条区域在 `WM_NCHITTEST` 返回 `HTCAPTION` 以支持拖动。默认尺寸 960×620（按 DPI 缩放），记忆上次尺寸与位置。
+**主窗口**：单一窗口类，`WS_POPUP` 无边框。Win11 外观由 DWM 的三个窗口属性给出（`app.cpp` 的 `apply_win11_chrome`）：
+`DWMWA_WINDOW_CORNER_PREFERENCE`（圆角 8）、`DWMWA_USE_IMMERSIVE_DARK_MODE`（深色框线）、
+`DwmExtendFrameIntoClientArea({1,1,1,1})`（1px 的框让 DWM 画出圆角与系统投影，客户区仍全部自绘）。
+D2D 表面是不透明的，所以**不做** `SYSTEMBACKDROP_TYPE` 的 Mica/亚克力（那种做法要换掉整个渲染器）。
+默认尺寸 960×620（按 DPI 缩放），记忆上次尺寸与位置。
+窗口外观在 Win10 上只是缺一点原生味（属性调用失败即保持直角），不影响绘制。
+
+**拖动区**：`WM_NCHITTEST` 里顶部标签行（逻辑高 `kViewTabsH` = 40）返回 `HTCAPTION`，
+但**命中某个视图标签时返回 `HTCLIENT`** —— 否则鼠标点标签会变成拖窗口（真的发生过）。
+四边与四角保留 6px 的缩放热区。
 
 **呼出与隐藏**
 
@@ -141,15 +150,28 @@ tests/
 - 文本用 `IDWriteTextFormat`，按 (字号, 字重, 对齐) 缓存复用，不每次创建。
 - **按需重绘**：维护 `m_dirty`。`WM_MOUSEMOVE` 仅在**悬停项索引变化**时标脏（不是每次移动都重绘）。`WM_PAINT` 先检查脏标记，不脏则 `ValidateRect` 直接返回。
 - **无动画**：滚动直接跳变。视觉质量靠圆角、抗锯齿、配色与留白，不靠动效。
-- 颜色集中在一个 `Theme` 结构体（深色/浅色两套，启动时读注册表 `AppsUseLightTheme` 选择）。
+- **视觉规范（Win11 Fluent 2 深色，只做深色）**：颜色全部集中在 `render.h` 的 `Theme` 里，
+  数值取 WinUI 的 dark themeresources。层色写成**半透明白的叠加色**，由 D2D 与清屏色混合得到，
+  换底色时不用重算每层：`bg #202020`、`card`/`control` = 白 5.1%/6.05%、`hover` = 白 8.4%、
+  `border` = 白 7.0%、`stroke_strong` = 白 54.5%（复选框）、`divider` = 白 8.4%；
+  文字 `text` = 白 89%、`text_dim` = 白 62%、`text_faint` = 白 48%；
+  强调 `accent #60CDFF`、`on_accent` = 黑 89%、`danger #FF99A4`；
+  选中/悬停的列表与网格用 `sel_fill`（强调色降透明度）+ `sel_stroke`（强调色 65%），文字仍用 `text`。
+  圆角 `kRadiusSm` 4 / `kRadiusMd` 8，间距 `kPad` 16。
+  字体：`Segoe UI Variable Text` → `Segoe UI` → `Microsoft YaHei UI`（`ui_font_family()` 里用 GDI 枚举探测一次），
+  自绘文字与原生 EDIT 用同一个族名。
+  同时用 uxtheme 的 `SetPreferredAppMode(ForceDark)`（序数 135）让系统画的菜单/MessageBox/滚动条也走深色。
 
 ## 7. 文本输入
 
 **所有文本编辑使用原生 `EDIT` 子控件，绝不自绘。** 封装为 `InlineEdit`：
 
 - 按需 `CreateWindowExW(L"EDIT", ...)`，`WS_CHILD | ES_AUTOHSCROLL`，`SetWindowSubclass` 拦截 `VK_RETURN`（提交）、`VK_ESCAPE`（取消）、`VK_TAB`（切换）
-- `WM_SETFONT` 设置与 UI 一致的微软雅黑，字号按 DPI 换算
-- `EM_SETMARGINS` 调整内边距，使其与自绘背景无缝
+- `WM_SETFONT` 设置与自绘文字同一个族名的字体（`ui_font_family()`，14px），字号按 DPI 换算
+- `SetWindowTheme(edit, L"DarkMode_Explorer")`：多行框的滚动条与插入符也跟着深色
+- `EM_SETMARGINS` 调整内边距（10），使其与自绘背景无缝；多行模式另外用 `EM_SETRECT` 让文字在内框里居中
+- 底/字色在父窗口的 `WM_CTLCOLOREDIT` 里给出，且是“Theme 层色叠在底色上”的**实色**
+  （`#2E2E2E` / `#E9E9E9`），否则输入框会在圆角容器里露出一块颜色不对的方角
 - 位置由视图提供，随滚动与 DPI 同步
 
 子 HWND 天然位于父窗口客户区之上，无需特殊处理层级。这套方案免费获得：中文 IME 候选窗、光标、选区、Shift 选择、`Ctrl+A/C/V/X`、右键菜单。
@@ -329,7 +351,7 @@ data/ui.txt         key  \t value      （窗口位置尺寸、上次视图、�
 | 验收项 | 结果 |
 |---|---|
 | 删条目后原文件仍在 | 只删引用，磁盘文件不变 |
-| 指向不存在路径的条目 | 灰显（`theme.text_dim`）+ 删除线（满格宽的横线） |
+| 指向不存在路径的条目 | 灰显（`theme.text_faint`）+ 删除线（满格宽的横线） |
 | 原文件改名 | 该条目失效；改回后恢复（呼出时重校验） |
 | 清理失效项 | 只少引用，磁盘文件一个不少 |
 | 手改 `boxes.txt` 混坏行 | 坏行跳过并计数，其余正常，落盘只剩好行 |
