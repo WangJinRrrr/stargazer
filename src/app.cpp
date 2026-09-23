@@ -191,10 +191,22 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return reinterpret_cast<LRESULT>(edit_bg_brush());
         }
         case WM_MOUSEMOVE: {
-            if (!app || app->in_drag) return 0;
+            if (!app) return 0;
             const POINT phys{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             const D2D1_POINT_2F lpt = app->render.to_logical(phys);
-            const int hit = launcher_hittest(app->state, app->render.client_logical(), lpt);
+            const D2D1_SIZE_F cs = app->render.client_logical();
+
+            if (app->internal_drag) {
+                const int over = launcher_tab_hittest(app->state, cs, lpt);
+                if (over != app->state.launcher.drag_over_tab) {
+                    app->state.launcher.drag_over_tab = over;
+                    ::InvalidateRect(hwnd, nullptr, FALSE);
+                }
+                return 0;
+            }
+            if (app->in_drag) return 0;  // 外部 OLE 拖拽悬停中，不高亮悬停项
+
+            const int hit = launcher_hittest(app->state, cs, lpt);
             if (hit != app->state.launcher.hover) {
                 app->state.launcher.hover = hit;
                 if (!app->mouse_tracking) {
@@ -231,10 +243,28 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             const int hit = launcher_hittest(app->state, cs, lpt);
             app->state.launcher.sel = hit;  // 点空白处 = 回到无选中态
-            if (hit >= 0) ::SetFocus(hwnd);
+            if (hit >= 0) {
+                ::SetFocus(hwnd);
+                app->internal_drag = true;  // 先按下，拖到标签上松开才真换组
+                app->drag_from = hit;
+                ::SetCapture(hwnd);
+            }
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        case WM_LBUTTONUP:
+            if (app && app->internal_drag) {
+                app->internal_drag = false;
+                ::ReleaseCapture();
+                if (app->state.launcher.drag_over_tab >= 0) {
+                    launcher_move_item_to_group(app->state, app->drag_from,
+                                                app->state.launcher.drag_over_tab);
+                }
+                app->state.launcher.drag_over_tab = -1;
+                app->drag_from = -1;
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
         case WM_LBUTTONDBLCLK: {
             // 双击启动（CS_DBLCLKS 已开启，系统保证只有快速双击才发这条消息）
             if (!app) return 0;
@@ -258,6 +288,20 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 ::InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
+        case WM_CONTEXTMENU: {
+            if (!app) return 0;
+            POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            if (pt.x == -1 && pt.y == -1) {  // 键盘唤出菜单
+                RECT rc{};
+                ::GetWindowRect(hwnd, &rc);
+                pt.x = rc.left + 40;
+                pt.y = rc.top + 40;
+            }
+            POINT client = pt;
+            ::ScreenToClient(hwnd, &client);
+            launcher_context_menu(*app, pt, client);
+            return 0;
+        }
         case WM_CHAR: {
             // 在网格里打字应当回到搜索框继续过滤，否则用户会以为搜索坏了
             if (!app) return 0;
@@ -278,6 +322,15 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             if (wp == VK_RETURN) {
                 if (app->state.launcher.sel >= 0) launch_selected(*app);
+                return 0;
+            }
+            if (wp == VK_F2) {
+                launcher_begin_rename(*app, app->render.client_logical());
+                return 0;
+            }
+            if (wp == VK_DELETE) {
+                launcher_delete_selected(app->state);
+                ::InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
             const D2D1_SIZE_F cs = app->render.client_logical();

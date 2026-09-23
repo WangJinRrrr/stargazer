@@ -1,7 +1,9 @@
 #include "views/launcher.h"
 
 #include <algorithm>
+#include <shellapi.h>  // ShellExecuteW（打开所在位置）
 
+#include "app.h"  // 右键菜单需要完整的 App 定义
 #include "icons.h"
 #include "model/paths.h"
 #include "model/search.h"
@@ -268,6 +270,95 @@ void launcher_sync_search(AppState& s, HWND parent, D2D1_SIZE_F client, Renderer
     } else {
         ls.search.set_rect(rc);
     }
+}
+
+void launcher_delete_selected(AppState& s) {
+    LauncherState& ls = s.launcher;
+    if (ls.sel < 0 || ls.sel >= static_cast<int>(ls.filtered.size())) return;
+    if (s.groups.empty()) return;
+    auto& items = s.groups[ls.group].items;
+    items.erase(items.begin() + ls.filtered[ls.sel]);
+    s.data_dirty = true;  // 只删引用，不碰磁盘上的文件
+    launcher_refilter(s);
+}
+
+void launcher_add_group(AppState& s) {
+    // 连续编号命名，避免为了一个新分组先弹输入框
+    int n = static_cast<int>(s.groups.size()) + 1;
+    std::wstring name = L"新分组 " + std::to_wstring(n);
+    while (std::any_of(s.groups.begin(), s.groups.end(),
+                       [&](const LaunchGroup& g) { return g.name == name; })) {
+        name = L"新分组 " + std::to_wstring(++n);
+    }
+    s.groups.push_back(LaunchGroup{ name, {} });
+    s.launcher.group = static_cast<int>(s.groups.size()) - 1;
+    s.launcher.sel = -1;
+    s.data_dirty = true;
+    launcher_refilter(s);
+}
+
+void launcher_move_item_to_group(AppState& s, int filtered_index, int group_index) {
+    LauncherState& ls = s.launcher;
+    if (filtered_index < 0 || filtered_index >= static_cast<int>(ls.filtered.size())) return;
+    if (group_index < 0 || group_index >= static_cast<int>(s.groups.size())) return;
+    if (group_index == ls.group) return;
+
+    auto& src = s.groups[ls.group].items;
+    const int raw = ls.filtered[filtered_index];
+    LaunchItem moved = src[raw];
+    src.erase(src.begin() + raw);
+    s.groups[group_index].items.push_back(std::move(moved));
+    s.data_dirty = true;
+    launcher_refilter(s);
+}
+
+void launcher_context_menu(App& app, POINT screen_pt, POINT client_pt) {
+    AppState& s = app.state;
+    const int hit = launcher_hittest(s, app.render.client_logical(),
+                                     app.render.to_logical(client_pt));
+    if (hit >= 0) s.launcher.sel = hit;
+
+    HMENU menu = ::CreatePopupMenu();
+    ::AppendMenuW(menu, MF_STRING, 1, L"新建条目(&N)");
+    ::AppendMenuW(menu, MF_STRING, 2, L"新建分组(&G)");
+    ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    ::AppendMenuW(menu, MF_STRING | (hit >= 0 ? MF_ENABLED : MF_GRAYED), 3, L"重命名(&R)");
+    ::AppendMenuW(menu, MF_STRING | (hit >= 0 ? MF_ENABLED : MF_GRAYED), 4, L"删除(&D)");
+    ::AppendMenuW(menu, MF_STRING | (hit >= 0 ? MF_ENABLED : MF_GRAYED), 5,
+                  L"打开所在位置(&F)");
+
+    const UINT cmd = ::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen_pt.x,
+                                      screen_pt.y, 0, app.panel, nullptr);
+    ::DestroyMenu(menu);
+
+    switch (cmd) {
+        case 1:
+            launcher_begin_new_item(app, app.render.client_logical());
+            break;
+        case 2:
+            launcher_add_group(s);
+            break;
+        case 3:
+            launcher_begin_rename(app, app.render.client_logical());
+            break;
+        case 4:
+            launcher_delete_selected(s);
+            break;
+        case 5:
+            if (hit >= 0) {
+                const LaunchItem& it = s.groups[s.launcher.group].items[s.launcher.filtered[hit]];
+                if (!it.target.empty()) {
+                    // 选中该文件而不只是打开它所在目录
+                    const std::wstring arg = L"/select," + it.target;
+                    ::ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(), nullptr,
+                                    SW_SHOWNORMAL);
+                }
+            }
+            break;
+        default:
+            break;
+    }
+    ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
 }  // namespace sg

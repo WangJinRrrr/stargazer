@@ -38,6 +38,7 @@ set(SG_SOURCES
   src/icons.cpp
   src/edit.cpp
   src/views/launcher.cpp
+  src/views/launcher_edit.cpp
   src/launch.cpp
   src/dragdrop.cpp
 )

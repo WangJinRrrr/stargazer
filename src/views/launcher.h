@@ -41,4 +41,22 @@ void launcher_sync_search(AppState& s, HWND parent, D2D1_SIZE_F client, Renderer
 // 按扩展名给占位块配色，同一扩展名总是同一颜色
 D2D1_COLOR_F ext_color(const std::wstring& path);
 
+// --- 条目与分组管理 ---
+
+// 删掉当前选中条目（只删引用，不碰磁盘上的文件）
+void launcher_delete_selected(AppState& s);
+// 新建分组（用连续编号命名，不为了一个新分组先弹输入框）
+void launcher_add_group(AppState& s);
+// 把条目从当前分组移到另一个分组
+void launcher_move_item_to_group(AppState& s, int filtered_index, int group_index);
+
+// 右键菜单：命中用客户区坐标，弹菜单用屏幕坐标（两个坐标不能混）
+struct App;
+void launcher_context_menu(App& app, POINT screen_pt, POINT client_pt);
+
+// 重命名当前条目；输入框叠在该格子上
+void launcher_begin_rename(App& app, D2D1_SIZE_F client);
+// 新建条目：两步输入（先名称，回车后再输目标）
+void launcher_begin_new_item(App& app, D2D1_SIZE_F client);
+
 }  // namespace sg

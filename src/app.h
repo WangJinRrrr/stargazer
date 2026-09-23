@@ -37,6 +37,9 @@ struct App {
     bool in_drag = false;
     bool running = true;
     bool mouse_tracking = false;
+    // 内部拖拽（把条目拖到分组标签上换组）。不走 OLE：自写状态机更短也更可控。
+    bool internal_drag = false;
+    int drag_from = -1;  // filtered 下标
     AppState state;
 };
 
