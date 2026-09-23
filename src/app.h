@@ -2,6 +2,8 @@
 
 #include <windows.h>
 
+#include <string>
+
 #include "persist.h"
 #include "render.h"
 
@@ -22,6 +24,8 @@ struct App {
     bool hotkey_ok = false;
     // 外部拖拽在窗口上悬停时为 true（抑制悬停高亮更新，不用于隐藏）
     bool in_drag = false;
+    // TEMP(Task 9 移除)：验证图标三级提取与异步回投
+    std::wstring debug_icon;
     bool running = true;
 };
 

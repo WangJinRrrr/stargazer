@@ -2,6 +2,8 @@
 
 #include <cstdio>
 
+#include "icons.h"
+
 namespace sg {
 
 bool Renderer::init(HWND wnd) {
@@ -85,6 +87,7 @@ void Renderer::end() {
     if (hr == D2DERR_RECREATE_TARGET) {
         // 设备丢失：丢弃设备相关资源，下一帧重建。图标位图由 icons 模块自理
         discard_device_resources();
+        icons_on_device_lost();
     }
 }
 

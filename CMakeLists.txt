@@ -17,6 +17,7 @@ set(MODEL_SOURCES
   src/model/paths.cpp
   src/model/search.cpp
   src/model/store.cpp
+  src/model/bgra.cpp
 )
 
 add_executable(test_model tests/test_model.cpp ${MODEL_SOURCES})
@@ -33,6 +34,7 @@ set(SG_SOURCES
   src/app.cpp
   src/text_io.cpp
   src/persist.cpp
+  src/icons.cpp
 )
 
 add_executable(stargazer WIN32 ${SG_SOURCES} ${MODEL_SOURCES})

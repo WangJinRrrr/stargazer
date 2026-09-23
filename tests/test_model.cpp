@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 
+#include "model/bgra.h"
 #include "model/paths.h"
 #include "model/rowformat.h"
 #include "model/search.h"
@@ -203,6 +204,34 @@ static void test_config() {
     CHECK_EQ(sg::config_get(back, L"hotkey", L""), std::wstring(L"Alt+Space"));
 }
 
+static void test_premultiply_bgra() {
+    // 不透明像素不变
+    uint8_t a[4] = { 10, 20, 30, 255 };
+    sg::premultiply_bgra(a, 1);
+    CHECK_EQ(int(a[0]), 10);
+    CHECK_EQ(int(a[1]), 20);
+    CHECK_EQ(int(a[2]), 30);
+    CHECK_EQ(int(a[3]), 255);
+
+    // 半透明向 0 收缩
+    uint8_t b[4] = { 200, 100, 0, 128 };
+    sg::premultiply_bgra(b, 1);
+    CHECK_EQ(int(b[0]), 100);  // 200*128/255 = 100
+    CHECK_EQ(int(b[1]), 50);
+    CHECK_EQ(int(b[2]), 0);
+    CHECK_EQ(int(b[3]), 128);
+
+    // 全透明像素不残留颜色（否则会出现亮边）
+    uint8_t c[4] = { 255, 255, 255, 0 };
+    sg::premultiply_bgra(c, 1);
+    CHECK_EQ(int(c[0]), 0);
+    CHECK_EQ(int(c[1]), 0);
+    CHECK_EQ(int(c[2]), 0);
+
+    // 幂等性不要求（重复调用会变暗），但空指针与 0 像素必须安全
+    sg::premultiply_bgra(nullptr, 0);
+}
+
 int main() {
     test_field_roundtrip();
     test_row_roundtrip();
@@ -218,6 +247,7 @@ int main() {
     test_boxes_roundtrip();
     test_todos_roundtrip_and_sort();
     test_config();
+    test_premultiply_bgra();
 
     if (g_failed == 0) {
         std::printf("OK: test_model 全部通过\n");

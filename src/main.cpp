@@ -5,6 +5,7 @@
 #include <string>
 
 #include "app.h"
+#include "icons.h"
 
 namespace {
 
@@ -52,12 +53,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     // 开机自启时只驻留托盘，不弹窗、不抢焦点
     if (!has_autostart_flag()) sg::app_show(app);
 
+    sg::icons_init(app.hwnd);
+
     MSG msg{};
     while (::GetMessageW(&msg, nullptr, 0, 0) > 0) {
         ::TranslateMessage(&msg);
         ::DispatchMessageW(&msg);
     }
 
+    sg::icons_shutdown();
     sg::app_shutdown(app);
     ::CoUninitialize();
     if (once) ::CloseHandle(once);

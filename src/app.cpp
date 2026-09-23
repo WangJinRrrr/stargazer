@@ -5,6 +5,7 @@
 
 #include <string>
 
+#include "icons.h"
 #include "text_io.h"
 
 namespace sg {
@@ -138,9 +139,27 @@ LRESULT CALLBACK app_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_HOTKEY:
             if (app && wp == app->hotkey_id) app_toggle(*app);
             return 0;
+        case WM_APP_ICON_READY:
+            ::InvalidateRect(hwnd, nullptr, FALSE);  // 只标脏，不抢焦点、不重排
+            return 0;
         case WM_KEYDOWN:
             // app 为空的路径理论到不了这里，但不必为此崩一次
-            if (app && wp == VK_ESCAPE) app_hide(*app);
+            if (!app) return 0;
+            // TEMP(Task 9 移除)：按 1/2 验证图标三级提取与异步回投
+            if (wp == L'1') {
+                app->debug_icon = L"C:\\Windows\\notepad.exe";
+                ::SetWindowTextW(hwnd, (L"dbg1:" + app->debug_icon).c_str());  // TEMP 观测
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (wp == L'2') {
+                app->debug_icon = L"D:\\不存在的网盘目录\\a.psd";
+                ::SetWindowTextW(hwnd, (L"dbg2:" + app->debug_icon).c_str());  // TEMP 观测
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            ::SetWindowTextW(hwnd, (L"nokey:" + std::to_wstring(wp)).c_str());  // TEMP 观测
+            if (wp == VK_ESCAPE) app_hide(*app);
             return 0;
         case WM_CREATE:
             if (app) app->render.init(hwnd);
@@ -162,6 +181,25 @@ LRESULT CALLBACK app_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 app->render.text(D2D1::RectF(24.f, 16.f, 400.f, 44.f), L"Stargazer 渲染层就绪",
                                  app->render.format(16.f, DWRITE_FONT_WEIGHT_SEMI_BOLD),
                                  app->render.theme.text);
+                // TEMP(Task 9 移除)：图标验证钩子
+                if (!app->debug_icon.empty()) {
+                    const bool is_dir = app->debug_icon.back() == L'\\';
+                    ID2D1Bitmap* dbg_bmp = icons_get(app->render, app->debug_icon, is_dir);
+                    // TEMP 观测：把绘制分支写在标题上（Task 9 随钩子一起删）
+                    ::SetWindowTextW(hwnd, dbg_bmp ? L"paint:icon" : L"paint:placeholder");
+                    if (dbg_bmp) {
+                        app->render.rt->DrawBitmap(
+                            dbg_bmp, D2D1::RectF(card.left + 16.f, card.top + 16.f, card.left + 64.f,
+                                                 card.top + 64.f),
+                            1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                    } else {
+                        // 未就绪先画占位，证明“骨架先出、图标后到”
+                        app->render.fill_round_rect(
+                            D2D1::RectF(card.left + 16.f, card.top + 16.f, card.left + 64.f,
+                                        card.top + 64.f),
+                            8.f, D2D1::ColorF(0.35f, 0.45f, 0.62f));
+                    }
+                }
                 app->render.end();
             }
             ::EndPaint(hwnd, &ps);
