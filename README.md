@@ -1,6 +1,6 @@
 # Stargazer
 
-便携式 Windows 桌面效率工具。阶段 1 已实现**快捷启动板**，其余三个模块（文件收纳盒、Todo、网盘浏览）按计划在后续阶段加入。
+便携式 Windows 桌面效率工具。阶段 1 已实现**快捷启动板**，阶段 2 已实现**文件收纳盒**，其余两个模块（Todo、网盘浏览）按计划在后续阶段加入。
 
 ## 构建
 
@@ -20,14 +20,16 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 ## 测试
 
 ```powershell
-& $CMAKE --build build --config Release --target test_model test_io
+& $CMAKE --build build --config Release --target test_model test_io test_layout
 .\build\Release\test_model.exe
 .\build\Release\test_io.exe
+.\build\Release\test_layout.exe
 ```
 
 `test_model` 覆盖行格式（含 Windows 路径不被误转义的回归）、路径规范化、自然序比较、数据序列化与排序、
-启动板/收纳盒/待办的往返与坏行跳过、拖入的容器逻辑（`box_add_paths`、`box_move_item`）、BGRA 预乘；
-`test_io` 覆盖 UTF-8 原子读写、目录可写性探测、`.lnk` 解析、`CF_HDROP` 构造（逐字节 + 双 NUL）。
+启动板/收纳盒/待办的往返与坏行跳过、拖入的容器逻辑（`box_add_paths`、`box_move_item`、盒子重名检查）、BGRA 预乘；
+`test_io` 覆盖 UTF-8 原子读写、目录可写性探测、`.lnk` 解析、`CF_HDROP` 构造（逐字节 + 双 NUL）；
+`test_layout` 覆盖共用网格的布局/命中/导航（含“命中不能超出画得出来的行”这条回归）。
 
 ## 使用
 

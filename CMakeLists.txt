@@ -29,6 +29,9 @@ add_executable(test_io tests/test_io.cpp
 target_include_directories(test_io PRIVATE src)
 target_link_libraries(test_io PRIVATE shell32 ole32 advapi32)
 
+add_executable(test_layout tests/test_layout.cpp src/views/grid_layout.cpp)
+target_include_directories(test_layout PRIVATE src)
+
 set(SG_SOURCES
   src/main.cpp
   src/render.cpp
@@ -41,6 +44,7 @@ set(SG_SOURCES
   src/views/launcher.cpp
   src/views/launcher_edit.cpp
   src/views/grid.cpp
+  src/views/grid_layout.cpp
   src/views/box.cpp
   src/launch.cpp
   src/dragdrop.cpp

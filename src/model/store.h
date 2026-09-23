@@ -60,6 +60,10 @@ size_t box_add_paths(std::vector<Box>& boxes, int box_index,
 // 越界、同盒、空列表一律不动并返回 false，调用方不必先自查。
 bool box_move_item(std::vector<Box>& boxes, int src_box, int index, int dst_box);
 
+// 盒子名是否已被**别的**盒子占用（except_index 是要改名的那一个）。
+// 改名必须用它拦重名：同名盒子在 parse 时会被合并，等于静默丢一个盒子的组织结构。
+bool box_name_taken(const std::vector<Box>& boxes, const std::wstring& name, int except_index);
+
 // 行格式：id \t done \t created \t due \t prio \t text
 std::wstring serialize_todos(const std::vector<TodoItem>& todos);
 std::vector<TodoItem> parse_todos(const std::wstring& text, int& bad);

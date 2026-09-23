@@ -302,6 +302,18 @@ static void test_box_move_item() {
     CHECK_EQ(boxes[1].items.size(), size_t{1});
 }
 
+// 回归（代码评审 Important 2）：改名不能造出重名盒子 —— parse_boxes 对同名盒子是“合并”，
+// 允许重名会在下次启动时静默把两个盒子并成一个（组织关系丢了）。
+static void test_box_name_taken() {
+    std::vector<sg::Box> boxes(2);
+    boxes[0].name = L"A";
+    boxes[1].name = L"B";
+    CHECK(sg::box_name_taken(boxes, L"A", 1));   // 别的盒子已经叫 A
+    CHECK(!sg::box_name_taken(boxes, L"A", 0));  // 改的就是自己：不算冲突
+    CHECK(!sg::box_name_taken(boxes, L"C", 0));
+    CHECK(!sg::box_name_taken(boxes, L"", 0));   // 空名不算占用（调用方本来就拒绝空名）
+}
+
 static void test_todos_roundtrip_and_sort() {
     std::vector<sg::TodoItem> todos;
     todos.push_back({ 1, false, 100, 0, 0, L"普通" });
@@ -388,6 +400,7 @@ int main() {
     test_boxes_ghost_lines();
     test_box_add_paths();
     test_box_move_item();
+    test_box_name_taken();
     test_todos_roundtrip_and_sort();
     test_config();
     test_premultiply_bgra();

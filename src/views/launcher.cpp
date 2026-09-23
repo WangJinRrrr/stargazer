@@ -182,6 +182,8 @@ void launcher_sync_search(AppState& s, HWND parent, D2D1_SIZE_F client, Renderer
         };
         // 搜索框在失焦时要留着：网格抢焦点不能让它和已输入的内容一起消失
         ls.search.keep_open_on_blur = true;
+        // 角色标记：只有它才把 EDIT 的每次变化当成“过滤条件”（重命名框共用同一个实例）
+        ls.search.is_search = true;
     } else {
         ls.search.set_rect(rc);
     }

@@ -92,6 +92,7 @@ void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initi
     // 轮着用时，上一次身份的标志会继承下来（真 bug：重命名框会像搜索框一样失焦不关）
     on_key = nullptr;
     keep_open_on_blur = false;
+    is_search = false;  // 角色标记随 open 归零，由调用方按需设置
     committing = false;
 
     if (font) ::DeleteObject(font);

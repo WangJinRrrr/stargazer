@@ -109,6 +109,14 @@ bool box_move_item(std::vector<Box>& boxes, int src_box, int index, int dst_box)
     return true;
 }
 
+bool box_name_taken(const std::vector<Box>& boxes, const std::wstring& name, int except_index) {
+    if (name.empty()) return false;  // 空名不算被占用（改名本来就不接受空名）
+    for (int i = 0; i < static_cast<int>(boxes.size()); ++i) {
+        if (i != except_index && boxes[i].name == name) return true;
+    }
+    return false;
+}
+
 static long long to_ll(const std::wstring& s) {
     return static_cast<long long>(std::wcstoll(s.c_str(), nullptr, 10));
 }

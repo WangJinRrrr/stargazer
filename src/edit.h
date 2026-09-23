@@ -22,6 +22,9 @@ struct InlineEdit {
     std::function<bool(UINT vk)> on_key;
     // 搜索框用：移焦到网格时提交内容但保留输入框（否则内容会跟输入框一起消失）
     bool keep_open_on_blur = false;
+    // 角色标记：只有启动板的搜索框会置它。重命名框与搜索框共用同一个实例，
+    // 不区分的话 EN_CHANGE 会把重命名时打的字写进 launcher.query（真 bug）
+    bool is_search = false;
     bool committing = false;  // 防重入：失焦提交时不再触发取消
 
     // rc 是**物理像素**（子窗口坐标），调用方负责用 Renderer::to_physical 换算

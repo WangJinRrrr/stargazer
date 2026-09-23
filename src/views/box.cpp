@@ -278,7 +278,9 @@ void box_rename_box(App& app, int index) {
         app.panel, rc, current, app.render.dpi,
         [&app, index](const std::wstring& t) {
             AppState& st = app.state;
-            if (!t.empty() && index < static_cast<int>(st.boxes.size())) {
+            // 重名盒子在 parse 时会被合并（数据层语义），所以改名要拒绝重名
+            if (!t.empty() && !box_name_taken(st.boxes, t, index) &&
+                index < static_cast<int>(st.boxes.size())) {
                 st.boxes[index].name = t;
                 st.data_dirty = true;
             }
@@ -362,7 +364,10 @@ void box_context_menu(App& app, POINT screen_pt, POINT client_pt) {
 
     const bool has_box = !s.boxes.empty();
     const int tab = has_box ? box_tab_hittest(s, client, lpt) : -1;
-    if (tab >= 0) s.box_view.box = tab;
+    if (tab >= 0) {
+        s.box_view.box = tab;
+        box_request_check(app);  // 与点击标签同一规则：换盒子就重校验
+    }
 
     HMENU menu = ::CreatePopupMenu();
     ::AppendMenuW(menu, MF_STRING, 1, L"新建盒子(&B)");

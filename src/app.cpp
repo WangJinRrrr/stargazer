@@ -461,6 +461,9 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     app->state.box_view.sel = -1;
                     app->state.box_view.scroll = 0;
                     box_clamp(app->state, cs);
+                    // 换盒子必须重校验：否则上一个盒子的失效标记会留着，
+                    // 文件已经恢复的条目仍是灰色，一键清理会误删这条活引用（代码评审 Important 3）
+                    box_request_check(*app);
                     ::InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
                 }
@@ -557,7 +560,9 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_COMMAND:
             // 边打字边过滤：EDIT 每次内容变化都会给父窗口发 EN_CHANGE，
             // 只连 Enter/失焦的提交是不够的（那样只在提交时才过滤）。
-            if (app && HIWORD(wp) == EN_CHANGE &&
+            // 必须同时确认它此刻是“搜索框”角色：重命名框是同一个 EDIT 实例，
+            // 否则改名时打的字会写进搜索条件（代码评审 Important 4）。
+            if (app && HIWORD(wp) == EN_CHANGE && app->state.launcher.search.is_search &&
                 reinterpret_cast<HWND>(lp) == app->state.launcher.search.hwnd) {
                 app->state.launcher.query = app->state.launcher.search.text();
                 launcher_refilter(app->state);
