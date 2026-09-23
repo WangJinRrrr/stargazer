@@ -8,6 +8,7 @@
 #include "fs_work.h"
 #include "icons.h"
 #include "images.h"
+#include "text_io.h"  // save_text（把修正后的热键写回 config.txt）
 
 namespace {
 
@@ -66,6 +67,27 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
 
     // 先读数据：app_show 要用已加载的分组与 ui.txt 里的窗口尺寸
     sg::app_load(app);
+
+    // 呼出热键在读完 config 之后注册（config 里可能记着用户改过的组合）。
+    // 记着的组合被占用就退回默认组合并修正 config；两个都不行才提示（只能用托盘）。
+    if (!sg::app_set_hotkey(app, 0, 0)) {
+        sg::config_set(app.state.config, sg::kHotkeyModsKey,
+                       std::to_wstring(sg::kDefaultHotkeyMods));
+        sg::config_set(app.state.config, sg::kHotkeyKeyKey,
+                       std::to_wstring(sg::kDefaultHotkeyKey));
+        sg::save_text(app.paths, L"config.txt", sg::serialize_config(app.state.config));
+        if (sg::app_set_hotkey(app, sg::kDefaultHotkeyMods, sg::kDefaultHotkeyKey)) {
+            sg::app_notify(app, L"记着的呼出热键被占用，已退回 " +
+                                    sg::hotkey_text(sg::kDefaultHotkeyMods,
+                                                    sg::kDefaultHotkeyKey));
+        } else {
+            ::MessageBoxW(nullptr,
+                          L"全局呼出热键注册失败（可能被其它程序占用）。\n"
+                          L"可以只用托盘图标呼出，或在托盘菜单里换一个热键。",
+                          L"Stargazer", MB_ICONWARNING);
+        }
+    }
+
     // 开机自启时只驻留托盘，不弹窗、不抢焦点
     if (!has_autostart_flag()) sg::app_show(app);
 

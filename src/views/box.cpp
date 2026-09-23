@@ -165,15 +165,16 @@ bool box_keydown(App& app, UINT vk) {
     const D2D1_SIZE_F client = app.render.client_logical();
     if (s.boxes.empty()) return false;
 
-    // Ctrl+Shift+Delete：清理本盒失效项（只删引用）。
-    // 修饰键用 GetAsyncKeyState：连击很快时 GetKeyState 的队列同步态可能还没更新
-    if (vk == VK_DELETE && (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 &&
+    // Ctrl+Shift+D：清理本盒失效项（只删引用）。
+    // 与待办清空已完成同一个键：Shift+Del 是彻底删，Ctrl+Shift 删是批量清理。
+    // 修饰键用 GetAsyncKeyState：连击很快时 GetKeyState 的队列同步态可能还没更新。
+    if (vk == 'D' && (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 &&
         (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0) {
         box_clear_missing(app);
         return true;
     }
 
-    // 条目动作（Ctrl+Shift+Delete 已在上面拦走，不会落到这里的删除）
+    // 条目动作（Ctrl+Shift+D 已在上面拦走，不会落到这里的删除）
     if (vk == VK_DELETE) {
         box_delete_selected(app);  // 只删引用
         return true;

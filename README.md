@@ -43,7 +43,9 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
   首次启动（还没有 `ui.txt`）停在**收纳盒**
 - 窗口拖动：顶部标签行的空白处按住拖动（标签本身是点击区，不会把点击变成拖窗口）；
   四边四角 6px 内可缩放。窗口外框是 Win11 的圆角 + 系统投影（DWM 属性，失败则退为直角）
-- 呼出热键 `Ctrl+Shift+Space`（固定在代码里，见「已知限制」）；再次按同一热键、按 `Esc`、或托盘菜单均可隐藏
+- 呼出热键 `Ctrl+Shift+Space`（**可在托盘菜单里改**：右键托盘图标 → 设置呼出热键…，
+  也可以直接改 `config.txt` 的 `hotkey_mods` / `hotkey_key`）；再次按同一热键、按 `Esc`、
+  或托盘菜单均可隐藏
 - **位置记忆**：隐藏后再呼出就停在原来那个地方（不会跳回屏幕中央）；位置与尺寸记在 `ui.txt`，
   首次启动才居中于鼠标所在显示器。显示器拔了 / 分辨率变了会自动夹回工作区
 
@@ -55,7 +57,7 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 - `Del` 删除引用（**不碰磁盘**）；`F2` 改显示名（可与真实文件名不同）
 - `Ctrl+C` 复制路径：同时给 `CF_HDROP` 与纯文本，粘到资源管理器就是“粘贴文件”，粘到编辑器就是一行路径
 - 按住条目拖到别的盒子标签上松开即换盒；拖出窗口则变成 OLE 拖出（对方拿到的是路径）
-- `Ctrl+Shift+Delete` 或右键菜单“清理失效项”：一次性删掉指向不存在文件的引用
+- `Ctrl+Shift+D` 或右键菜单“清理失效项”：一次性删掉指向不存在文件的引用（与待办清空已完成同一个键）
 - 右键菜单：新建盒子 / 重命名盒子 / 删除盒子 / 打开 / 复制路径 / 重命名条目 / 删除条目 / 清理失效项
 - **失效检测**：呼出时由第二条工作线程批量校验存在性，指向的文件被改名或删除后该条目会灰显并加删除线，
   其余条目照常用；文件改回来就恢复。校验是异步的，断开的网盘不会卡住界面
@@ -81,6 +83,12 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 
 ### 浏览（读本地目录 / 网盘目录）
 
+- 键盘：`↑↓` 选行、`PgUp/PgDn`、`Home/End`、`Enter` 打开（目录 = 进入）、`Backspace` 上一级、
+  `Alt+←/→` 后退/前进、`Ctrl+L` 地址栏、`Ctrl+C` 复制路径、`Ctrl+V` 把剪贴板里的文件复制到当前目录、
+  `F2` 改名、`F5` 刷新、`F7` 新建文件夹、`Del` 删除到回收站、`Shift+Del` 永久删除
+- 左手位浏览（不想把手从 `WASD` 上拿开时）：`Ctrl+W` / `Ctrl+S` 上下移动选中，
+  `Ctrl+A` / `Ctrl+D` 后退 / 前进（与 `↑↓`、`Alt+←/→`、`Backspace` 并存）
+
 **不做失焦自动隐藏**：窗口会一直浮在最上层，直到你按 `Esc`、再按一次热键或用托盘菜单关掉。
 这是有意的取舍 —— 否则从资源管理器按住文件往窗口里拖时，窗口会在鼠标按下那一刻就消失。
 
@@ -92,7 +100,7 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 |---|---|
 | `boxes.txt` | `盒子 \t 名称 \t 路径`（空盒子写一行“盒子名 + 两个空字段”的占位行） |
 | `todo.txt` | `id \t done \t created \t kind \t text \t attach`（`kind` = `text`/`link`/`image`） |
-| `config.txt` | `键 \t 值`；目前只有 `browse_root`（浏览的根目录，由托盘菜单写入） |
+| `config.txt` | `键 \t 值`：`browse_root`（浏览的根目录）、`hotkey_mods` / `hotkey_key`（呼出热键的修饰键位与虚拟键码，托盘菜单可改） |
 | `ui.txt` | 窗口尺寸（逻辑像素）、位置（物理像素）、上次视图（`0` 收纳盒 / `1` 待办 / `2` 浏览）、上次盒子 |
 
 UTF-8 编码、无 BOM，行内 Tab 分隔，字段内 `|` `Tab` `换行` 分别写作 `||` `|t` `|n`。
@@ -123,7 +131,8 @@ UTF-8 编码、无 BOM，行内 Tab 分隔，字段内 `|` `Tab` `换行` 分别
 
 ## 已知限制（阶段 1 / 2 范围内有意不做）
 
-- 无设置界面：热键固定为 `Ctrl+Shift+Space`；配色是 Win11 Fluent 深色（只做深色，不跟随系统主题），写死在 `render.h` 的 `Theme` 里
+- 无设置界面：除了「呼出热键」可以在托盘菜单里改（`config.txt` 也能手改），其余没有可视化设置；
+  配色是 Win11 Fluent 深色（只做深色，不跟随系统主题），写死在 `render.h` 的 `Theme` 里
 - 无滚动条（滚轮 / 键盘），无按压与焦点动画；圆角、悬停填充与下划指示条是静态的
 - 系统画的对话框（MessageBox、右键菜单）靠 uxtheme 的 `SetPreferredAppMode(ForceDark)` 变深色；
   系统本身是浅色主题时它们仍会是浅色（本程序的自绘部分不受影响）

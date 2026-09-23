@@ -126,7 +126,8 @@ D2D 表面是不透明的，所以**不做** `SYSTEMBACKDROP_TYPE` 的 Mica/亚�
 
 | 触发 | 实现 |
 |---|---|
-| 全局热键 | `RegisterHotKey(hwnd, 1, MOD_CONTROL\|MOD_SHIFT, VK_SPACE)`，可在设置中修改 |
+| 全局热键 | `RegisterHotKey(hwnd, 1, MOD_CONTROL\|MOD_SHIFT, VK_SPACE)`，默认 `Ctrl+Shift+Space`；
+注册在读完 `config.txt` 之后，组合记在 `hotkey_mods` / `hotkey_key`，托盘菜单里可改（HOTKEY 控件的小弹窗） |
 | 托盘 | `Shell_NotifyIcon` + `TrackPopupMenu` 右键菜单 |
 | 隐藏 | `Esc`、再次按热键、托盘菜单 |
 

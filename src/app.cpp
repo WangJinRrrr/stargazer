@@ -18,6 +18,7 @@
 #include "views/todo.h"
 
 #include <shobjidl.h>  // IFileDialog（托盘菜单选浏览目录）
+#include <commctrl.h>   // InitCommonControlsEx + HOTKEY 控件（设置热键对话框）
 #include <dwmapi.h>     // Win11 圆角/深色框（可选属性，失败也不影响绘制）
 
 namespace sg {
@@ -70,6 +71,7 @@ static void apply_win11_chrome(HWND hwnd) {
 
 // 托盘菜单要用（定义在下方）
 static void app_set_view(App& app, View v);
+static void show_hotkey_dialog(App& app);
 
 // 崩溃日志路径。写不进去就算了，崩溃路径上不能再抛异常
 std::wstring g_crash_log;
@@ -108,9 +110,6 @@ void tray_balloon(App& app, const wchar_t* title, const std::wstring& text) {
     wcsncpy_s(nid.szInfo, text.c_str(), _TRUNCATE);
     ::Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
-const UINT kDefaultHotkeyMods = MOD_CONTROL | MOD_SHIFT;
-const UINT kDefaultHotkeyKey = VK_SPACE;
-
 // 默认窗口尺寸（96 DPI 逻辑像素）
 const int kDefaultW = 960;
 const int kDefaultH = 620;
@@ -168,6 +167,7 @@ void show_tray_menu(App& app) {
 
     HMENU menu = ::CreatePopupMenu();
     ::AppendMenuW(menu, MF_STRING, 1, L"呼出 (&S)");
+    ::AppendMenuW(menu, MF_STRING, 5, L"设置呼出热键…(&K)");
     ::AppendMenuW(menu, MF_STRING, 4, L"设置浏览目录…(&D)");
     ::AppendMenuW(menu, MF_STRING, 2, L"开机自启");
     if (autostart_enabled()) {
@@ -186,6 +186,9 @@ void show_tray_menu(App& app) {
     switch (cmd) {
         case 1:
             app_show(app);
+            break;
+        case 5:
+            show_hotkey_dialog(app);
             break;
         case 2:
             autostart_set(!autostart_enabled(), exe_path());
@@ -275,6 +278,231 @@ bool ensure_panel(App& app) {
 }
 
 // 切换顶层视图。盒子重命名框是所有视图共用的同一个 InlineEdit，切走前先关掉。
+static RECT work_area_for(int x, int y) {
+    const HMONITOR mon = ::MonitorFromPoint(POINT{ x, y }, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (!::GetMonitorInfoW(mon, &mi)) {
+        return RECT{ 0, 0, ::GetSystemMetrics(SM_CXSCREEN), ::GetSystemMetrics(SM_CYSCREEN) };
+    }
+    return mi.rcWork;
+}
+
+// ---------------------------------------------------------------- 呼出热键设置
+// 没有 .rc 资源文件，所以这个“对话框”是自己搭的小窗口：系统标题栏 + 提示 + HOTKEY 控件 + 两个按钮，
+// 再用 IsDialogMessageW 跑一段模态循环（Tab / 方向键 / 回车都交给它）。
+// HOTKEY（msctls_hotkey32）是系统控件：按下组合键时它自己翻译成 VK + 修饰位，不用我们碰键盘钩子。
+const wchar_t* kHotkeyDlgClass = L"StargazerHotkeyDlg";
+constexpr int kHkCtlId = 103;
+// 用标准对话框 id（IDOK/IDCANCEL）：IsDialogMessageW 的“回车 = 默认按钮 / Esc = 取消”认的是它们
+constexpr int kHkOkId = IDOK;
+constexpr int kHkCancelId = IDCANCEL;
+
+struct HotkeyDlg {
+    App* app = nullptr;
+    HWND hotkey = nullptr;  // HOTKEY 控件
+    HFONT font = nullptr;
+};
+
+// 对话框自己的深色底刷（与面板一致）。常驻一个，不每次新建。
+HBRUSH dlg_brush() {
+    static HBRUSH b = ::CreateSolidBrush(RGB(32, 32, 32));
+    return b;
+}
+
+BYTE hotkeyf_of(UINT mods) {
+    BYTE f = 0;
+    if ((mods & MOD_SHIFT) != 0) f |= HOTKEYF_SHIFT;
+    if ((mods & MOD_CONTROL) != 0) f |= HOTKEYF_CONTROL;
+    if ((mods & MOD_ALT) != 0) f |= HOTKEYF_ALT;
+    return f;
+}
+
+// 子控件：坐标写逻辑像素，这里乘 DPI；字体统一给界面字体
+HWND dlg_child(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y,
+               int w, int h, int id, HFONT font, HINSTANCE inst, UINT dpi) {
+    const auto S = [dpi](int v) { return ::MulDiv(v, static_cast<int>(dpi), 96); };
+    HWND c = ::CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, S(x), S(y), S(w), S(h),
+                               parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), inst,
+                               nullptr);
+    if (c && font) ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    return c;
+}
+
+LRESULT CALLBACK hotkey_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    HotkeyDlg* d = reinterpret_cast<HotkeyDlg*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_NCCREATE:
+            ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                                reinterpret_cast<LONG_PTR>(
+                                    reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+            return TRUE;
+        case WM_CREATE: {
+            const auto* cs = reinterpret_cast<const CREATESTRUCTW*>(lp);
+            const HINSTANCE inst = cs->hInstance;
+            const UINT dpi = ::GetDpiForWindow(hwnd);
+            d->font = ::CreateFontW(-::MulDiv(14, static_cast<int>(dpi), 96), 0, 0, 0, FW_NORMAL,
+                                    FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                    CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                    DEFAULT_PITCH | FF_DONTCARE, ui_font_family());
+            dlg_child(hwnd, L"STATIC", L"按下新的组合键（至少带一个 Ctrl / Alt / Shift）：",
+                      SS_LEFT, 16, 16, 328, 20, -1, d->font, inst, dpi);
+            d->hotkey = dlg_child(hwnd, L"msctls_hotkey32", L"", WS_BORDER | WS_TABSTOP, 16, 42,
+                                  180, 24, kHkCtlId, d->font, inst, dpi);
+            if (d->hotkey) {
+                // 不允许“没有修饰键”的组合（那种组合 RegisterHotKey 也吃不下）；
+                // 真按了就用 Ctrl 补上——系统控件的规矩。
+                ::SendMessageW(d->hotkey, HKM_SETRULES,
+                               HKCOMB_NONE | HKCOMB_S | HKCOMB_C | HKCOMB_A | HKCOMB_SC |
+                                   HKCOMB_SA | HKCOMB_CA,
+                               MAKELPARAM(HOTKEYF_CONTROL, 0));
+                ::SendMessageW(d->hotkey, HKM_SETHOTKEY,
+                               MAKEWORD(d->app->hotkey_key, hotkeyf_of(d->app->hotkey_mods)), 0);
+            }
+            dlg_child(hwnd, L"BUTTON", L"确定", WS_TABSTOP | BS_DEFPUSHBUTTON, 180, 96, 78, 28,
+                      kHkOkId, d->font, inst, dpi);
+            dlg_child(hwnd, L"BUTTON", L"取消", WS_TABSTOP, 266, 96, 78, 28, kHkCancelId,
+                      d->font, inst, dpi);
+            return 0;
+        }
+        case WM_COMMAND:
+            if (!d) break;
+            if (LOWORD(wp) == kHkOkId) {
+                const WORD v = static_cast<WORD>(::SendMessageW(d->hotkey, HKM_GETHOTKEY, 0, 0));
+                UINT mods = 0;
+                if ((v & HOTKEYF_SHIFT) != 0) mods |= MOD_SHIFT;
+                if ((v & HOTKEYF_CONTROL) != 0) mods |= MOD_CONTROL;
+                if ((v & HOTKEYF_ALT) != 0) mods |= MOD_ALT;
+                const UINT key = v & 0xFF;
+                if (key == 0 || mods == 0) {
+                    tray_balloon(*d->app, L"Stargazer",
+                                 L"请按一个带 Ctrl / Alt / Shift 的组合键");
+                    return 0;  // 不关窗，让用户重按
+                }
+                if (!app_set_hotkey(*d->app, mods, key)) {
+                    // 失败时 app_set_hotkey 已经把原来的组合恢复回去了
+                    tray_balloon(*d->app, L"Stargazer",
+                                 L"这个组合被别的程序占用了：" + hotkey_text(mods, key));
+                    return 0;
+                }
+                // 成功：写进 config.txt（config 只有这里会改，所以就地落盘）
+                config_set(d->app->state.config, kHotkeyModsKey, std::to_wstring(mods));
+                config_set(d->app->state.config, kHotkeyKeyKey, std::to_wstring(key));
+                if (!save_text(d->app->paths, L"config.txt",
+                               serialize_config(d->app->state.config))) {
+                    tray_balloon(*d->app, L"Stargazer", L"热键已生效，但写 config.txt 失败");
+                }
+                ::DestroyWindow(hwnd);
+                return 0;
+            }
+            if (LOWORD(wp) == kHkCancelId) {
+                ::DestroyWindow(hwnd);
+                return 0;
+            }
+            break;
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORBTN: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            ::SetTextColor(dc, RGB(233, 233, 233));
+            ::SetBkColor(dc, RGB(32, 32, 32));
+            return reinterpret_cast<LRESULT>(dlg_brush());
+        }
+        case WM_CLOSE:
+            ::DestroyWindow(hwnd);
+            return 0;
+        case WM_DESTROY:
+            if (d && d->font) {
+                ::DeleteObject(d->font);
+                d->font = nullptr;
+            }
+            return 0;
+        default:
+            break;
+    }
+    return ::DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+void show_hotkey_dialog(App& app) {
+    if (app.modal) return;  // 不叠第二个
+    if (!ensure_panel(app)) return;
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.style = CS_DBLCLKS;
+        wc.lpfnWndProc = hotkey_dlg_proc;
+        wc.hInstance = app.inst;
+        wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
+        wc.hbrBackground = dlg_brush();
+        wc.lpszClassName = kHotkeyDlgClass;
+        if (!::RegisterClassExW(&wc)) return;
+        registered = true;
+    }
+
+    POINT pt{};
+    ::GetCursorPos(&pt);
+    const RECT wa = work_area_for(pt.x, pt.y);
+    const UINT dpi = static_cast<UINT>(app.render.dpi > 0.f ? app.render.dpi : 96.f);
+    const auto S = [dpi](int v) { return ::MulDiv(v, static_cast<int>(dpi), 96); };
+
+    HotkeyDlg d;
+    d.app = &app;
+    HWND dlg = ::CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT, kHotkeyDlgClass,
+                                 L"设置呼出热键", WS_POPUP | WS_CAPTION | WS_SYSMENU, wa.left,
+                                 wa.top, S(360) + 32, S(132) + 64, app.panel, nullptr, app.inst,
+                                 &d);
+    if (!dlg) return;
+
+    // 量出非客户区（标题栏/边框）再把外框调到客户区刚好 360×132 —— 比 AdjustWindowRectEx 准，
+    // 后者用的是主显示器的 DPI，跨缩放显示器时会差一截。
+    RECT wr{}, cr{};
+    ::GetWindowRect(dlg, &wr);
+    ::GetClientRect(dlg, &cr);
+    const int outer_w = S(360) + ((wr.right - wr.left) - cr.right);
+    const int outer_h = S(132) + ((wr.bottom - wr.top) - cr.bottom);
+    const int x = wa.left + ((wa.right - wa.left) - outer_w) / 2;
+    const int y = wa.top + ((wa.bottom - wa.top) - outer_h) / 2;
+    ::SetWindowPos(dlg, nullptr, x, y, outer_w, outer_h, SWP_NOZORDER | SWP_NOACTIVATE);
+
+    app.modal = true;
+    ::EnableWindow(app.panel, FALSE);  // 模态：面板不接受输入
+    ::ShowWindow(dlg, SW_SHOW);
+    if (d.hotkey) ::SetFocus(d.hotkey);
+
+    MSG msg{};
+    // 按住任一修饰键时就别把回车当“确定”：用户可能正想把 Ctrl+Enter 设成热键
+    const auto modifier_down = [] {
+        return (::GetKeyState(VK_CONTROL) & 0x8000) != 0 ||
+               (::GetKeyState(VK_SHIFT) & 0x8000) != 0 ||
+               (::GetKeyState(VK_MENU) & 0x8000) != 0;
+    };
+    while (::IsWindow(dlg)) {
+        if (::GetMessageW(&msg, nullptr, 0, 0) <= 0) {
+            ::PostQuitMessage(static_cast<int>(msg.wParam));  // 别把 WM_QUIT 吃在自己这里
+            break;
+        }
+        if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
+            ::DestroyWindow(dlg);
+            break;
+        }
+        // HOTKEY 控件要抓所有按键（它自己就是干这个的），回车/Esc 会被它吃掉，
+        // 所以“光按回车 = 确定”自己处理
+        if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN && !modifier_down()) {
+            ::SendMessageW(dlg, WM_COMMAND, kHkOkId, 0);
+            continue;
+        }
+        if (!::IsDialogMessageW(dlg, &msg)) {
+            ::TranslateMessage(&msg);
+            ::DispatchMessageW(&msg);
+        }
+    }
+    ::EnableWindow(app.panel, TRUE);
+    app.modal = false;
+    if (::IsWindow(app.panel)) ::SetForegroundWindow(app.panel);
+}
+
 static void app_set_view(App& app, View v) {
     if (app.panel == nullptr || v == app.state.view) return;
     AppState& s = app.state;
@@ -326,7 +554,8 @@ LRESULT CALLBACK ctl_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                     reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
             return TRUE;
         case WM_HOTKEY:
-            if (app && wp == app->hotkey_id) app_toggle(*app);
+            // 模态小窗开着时不理它：否则点“确定”前后会把面板忽隐忽现
+            if (app && !app->modal && wp == app->hotkey_id) app_toggle(*app);
             return 0;
         case WM_APP_TRAY:
             if (app) on_tray(*app, lp);
@@ -869,6 +1098,65 @@ void app_notify(App& app, const std::wstring& text) {
     tray_balloon(app, L"Stargazer", text);
 }
 
+std::wstring hotkey_text(UINT mods, UINT key) {
+    std::wstring s;
+    if ((mods & MOD_CONTROL) != 0) s += L"Ctrl+";
+    if ((mods & MOD_ALT) != 0) s += L"Alt+";
+    if ((mods & MOD_SHIFT) != 0) s += L"Shift+";
+    // 常见键给个好看的名字，其余用“VK 0x..”，不为了好看去拉一张全表
+    switch (key) {
+        case VK_SPACE: s += L"Space"; break;
+        case VK_TAB: s += L"Tab"; break;
+        case VK_RETURN: s += L"Enter"; break;
+        case VK_ESCAPE: s += L"Esc"; break;
+        default:
+            if ((key >= '0' && key <= '9') || (key >= 'A' && key <= 'Z')) {
+                s += static_cast<wchar_t>(key);
+            } else if (key >= VK_F1 && key <= VK_F24) {
+                s += L"F" + std::to_wstring(key - VK_F1 + 1);
+            } else {
+                wchar_t buf[16] = {};
+                ::swprintf_s(buf, L"VK 0x%02X", key);
+                s += buf;
+            }
+            break;
+    }
+    return s;
+}
+
+bool app_set_hotkey(App& app, UINT mods, UINT key) {
+    if (mods == 0 || key == 0) {
+        const std::wstring ms = config_get(app.state.config, kHotkeyModsKey, L"");
+        const std::wstring ks = config_get(app.state.config, kHotkeyKeyKey, L"");
+        const UINT m = ms.empty() ? kDefaultHotkeyMods : static_cast<UINT>(_wtoi(ms.c_str()));
+        const UINT k = ks.empty() ? kDefaultHotkeyKey : static_cast<UINT>(_wtoi(ks.c_str()));
+        // 手改坏了（0 / 负数 / 只有 Shift）就回默认值：宁可热键可用，不要热键“设了但没用”
+        const UINT valid = MOD_CONTROL | MOD_ALT | MOD_SHIFT;
+        if (k == 0 || (m & valid) == 0 || m == MOD_SHIFT) {
+            mods = kDefaultHotkeyMods;
+            key = kDefaultHotkeyKey;
+        } else {
+            mods = m;
+            key = k;
+        }
+    }
+    if (app.hotkey_ok) {
+        ::UnregisterHotKey(app.ctl, app.hotkey_id);
+        app.hotkey_ok = false;
+    }
+    if (::RegisterHotKey(app.ctl, app.hotkey_id, mods, key) != FALSE) {
+        app.hotkey_mods = mods;
+        app.hotkey_key = key;
+        app.hotkey_ok = true;
+        return true;
+    }
+    // 新的没注册上：把原来那个恢复回去 —— 否则用户会忽然变成“没有任何呼出热键”
+    if (::RegisterHotKey(app.ctl, app.hotkey_id, app.hotkey_mods, app.hotkey_key) != FALSE) {
+        app.hotkey_ok = true;
+    }
+    return false;
+}
+
 void app_request_fs_checks(App& app) {
     AppState& s = app.state;
     std::vector<std::wstring> paths;
@@ -918,19 +1206,6 @@ void app_save_ui(App& app) {
         config_set(ui, L"box", app.state.boxes[bi].name);
     }
     save_text(app.paths, L"ui.txt", serialize_config(ui));
-}
-
-// 某个点所在显示器的工作区（托盘/任务栏之外的那块）。
-// MonitorFromPoint 带 DEFAULTNEAREST：位置已经跑到所有显示器之外时，
-// 会给出最近的那块 —— 所以下面那个夹紧一定有一个可用的工作区。
-static RECT work_area_for(int x, int y) {
-    const HMONITOR mon = ::MonitorFromPoint(POINT{ x, y }, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO mi{};
-    mi.cbSize = sizeof(mi);
-    if (!::GetMonitorInfoW(mon, &mi)) {
-        return RECT{ 0, 0, ::GetSystemMetrics(SM_CXSCREEN), ::GetSystemMetrics(SM_CYSCREEN) };
-    }
-    return mi.rcWork;
 }
 
 void app_show(App& app) {
@@ -1063,14 +1338,13 @@ bool app_init(App& app, HINSTANCE inst) {
                                 inst, &app);
     if (!app.ctl) return false;
 
-    app.hotkey_ok =
-        ::RegisterHotKey(app.ctl, app.hotkey_id, kDefaultHotkeyMods, kDefaultHotkeyKey) != FALSE;
-    if (!app.hotkey_ok) {
-        ::MessageBoxW(nullptr,
-                      L"全局热键 Ctrl+Shift+Space 注册失败（可能被其它程序占用）。\n"
-                      L"可继续用托盘图标呼出。",
-                      L"Stargazer", MB_ICONWARNING);
-    }
+    // 呼出热键不在这里注册：config.txt 还没读（app_load 在 main 里、本函数之后才跑），
+    // 注册放在 main 里 app_load 之后（见 app_set_hotkey）。
+    // HOTKEY 控件要的 comctl32 类在这里注册一次即可。
+    INITCOMMONCONTROLSEX icc{};
+    icc.dwSize = sizeof(icc);
+    icc.dwICC = ICC_HOTKEY_CLASS | ICC_STANDARD_CLASSES;
+    ::InitCommonControlsEx(&icc);
 
     add_tray_icon(app);
     autostart_heal(exe_path());

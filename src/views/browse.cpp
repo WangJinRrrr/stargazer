@@ -400,6 +400,22 @@ bool browse_keydown(App& app, UINT vk) {
     const bool shift = (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
     const bool alt = (::GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
 
+    // Ctrl+W/A/S/D：左手位浏览（W/S 上下移动选中，A/D 后退/前进）。
+    // 与 ↑↓ / Alt+←→ / Backspace 并存 —— 旧键位不动，手感与验收脚本都靠它们。
+    if (ctrl) {
+        if (vk == L'W') {
+            vk = VK_UP;
+        } else if (vk == L'S') {
+            vk = VK_DOWN;
+        } else if (vk == L'A') {
+            browse_back(app);
+            return true;
+        } else if (vk == L'D') {
+            browse_forward(app);
+            return true;
+        }
+    }
+
     if (ctrl && vk == L'L') {
         browse_edit_path(app);
         return true;
