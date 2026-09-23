@@ -5,6 +5,9 @@
 
 MIT 许可证，见 [LICENSE](LICENSE)。
 
+**下载**：到 [Releases](https://github.com/WangJinRrrr/stargazer/releases/latest) 取 `Stargazer-1.0.0-win64.zip`，
+解压到任意可写目录双击 `stargazer.exe` 即可（免安装、免运行库）；想自己编译见下。
+
 ## 构建
 
 要求：Visual Studio（含“C++ 桌面开发”工作负载）+ CMake 3.20+。
