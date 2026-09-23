@@ -87,7 +87,8 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
   `Alt+←/→` 后退/前进、`Ctrl+L` 地址栏、`Ctrl+C` 复制路径、`Ctrl+V` 把剪贴板里的文件复制到当前目录、
   `F2` 改名、`F5` 刷新、`F7` 新建文件夹、`Del` 删除到回收站、`Shift+Del` 永久删除
 - 左手位浏览（不想把手从 `WASD` 上拿开时）：`Ctrl+W` / `Ctrl+S` 上下移动选中，
-  `Ctrl+A` / `Ctrl+D` 后退 / 前进（与 `↑↓`、`Alt+←/→`、`Backspace` 并存）
+  `Ctrl+A` 进入上一级目录，`Ctrl+D` 进入下一级目录（选中项是目录时；文件仍用 `Enter` 打开）
+  —— 注：这里管的是**目录层级**，浏览历史仍是 `Alt+←/→`
 
 **不做失焦自动隐藏**：窗口会一直浮在最上层，直到你按 `Esc`、再按一次热键或用托盘菜单关掉。
 这是有意的取舍 —— 否则从资源管理器按住文件往窗口里拖时，窗口会在鼠标按下那一刻就消失。

@@ -400,19 +400,24 @@ bool browse_keydown(App& app, UINT vk) {
     const bool shift = (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
     const bool alt = (::GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
 
-    // Ctrl+W/A/S/D：左手位浏览（W/S 上下移动选中，A/D 后退/前进）。
-    // 与 ↑↓ / Alt+←→ / Backspace 并存 —— 旧键位不动，手感与验收脚本都靠它们。
+    // Ctrl+W/A/S/D：左手位浏览。W/S 上下移动选中；A = 进上一级目录，D = 进下一级目录。
+    // 与 ↑↓ / Backspace / Alt+←→ 并存 —— 旧键位不动，手感与验收脚本都靠它们。
+    // 注：Ctrl+A/D 是**目录层级**，不是浏览历史（历史仍是 Alt+←/→）；
+    // “进下一级”只在选中项是目录时生效 —— 文件交回 Enter，避两者语义混在一起。
     if (ctrl) {
         if (vk == L'W') {
             vk = VK_UP;
         } else if (vk == L'S') {
             vk = VK_DOWN;
         } else if (vk == L'A') {
-            browse_back(app);
+            browse_up(app);
             return true;
         } else if (vk == L'D') {
-            browse_forward(app);
-            return true;
+            const int sel = b.sel;
+            if (sel >= 0 && sel < count && b.entries[static_cast<size_t>(sel)].is_dir) {
+                browse_go(app, entry_path(s, sel));
+            }
+            return true;  // 不是目录就什么也不做（沉默，不弹提示）
         }
     }
 
