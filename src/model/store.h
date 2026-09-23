@@ -22,6 +22,8 @@ struct LaunchGroup {
 struct BoxItem {
     std::wstring name;  // 显示名（可与真实文件名不同）
     std::wstring path;  // 绝对路径，仅引用，永不移动
+    // 失效标记：运行期状态，由工作线程 B 校验后填，**不参与序列化**（不写进 boxes.txt）
+    bool missing = false;
 };
 
 struct Box {

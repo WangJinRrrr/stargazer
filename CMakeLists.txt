@@ -40,6 +40,7 @@ set(SG_SOURCES
   src/views/launcher.cpp
   src/views/launcher_edit.cpp
   src/views/grid.cpp
+  src/views/box.cpp
   src/launch.cpp
   src/dragdrop.cpp
 )

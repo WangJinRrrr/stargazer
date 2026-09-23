@@ -26,6 +26,15 @@ struct LauncherState {
     InlineEdit search;
 };
 
+// 文件收纳盒视图状态（只属于盒子，不污染全局）
+struct BoxState {
+    int box = 0;            // 当前盒子下标
+    int sel = -1;           // 网格选中下标；-1 = 无
+    int hover = -1;
+    int scroll = 0;         // 起始行
+    int drag_over_tab = -1;  // 内部拖拽时高亮的目标盒子标签
+};
+
 struct AppState {
     std::vector<LaunchGroup> groups;
     std::vector<Box> boxes;
@@ -34,6 +43,7 @@ struct AppState {
     int bad_lines = 0;
     View view = View::Launcher;
     LauncherState launcher;
+    BoxState box_view;
     bool data_dirty = false;
     // ui.txt 里想要的窗口尺寸（逻辑像素）。0 = 用默认值。
     // 存起来等面板真正创建时再应用：app_load 跑在面板存在之前，那里改尺寸是死代码。

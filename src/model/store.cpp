@@ -42,6 +42,13 @@ std::vector<LaunchGroup> parse_launcher(const std::wstring& text, int& bad) {
 std::wstring serialize_boxes(const std::vector<Box>& boxes) {
     std::vector<std::vector<std::wstring>> rows;
     for (const auto& b : boxes) {
+        if (b.items.empty()) {
+            // 空盒子也要落盘：写一行“盒子名 + 两个空字段”的占位行，
+            // parse 认出它只建盒子不建条目（与空分组同一套约定），
+            // 否则新建的盒子重启后就消失了
+            rows.push_back({ b.name, L"", L"" });
+            continue;
+        }
         for (const auto& it : b.items) {
             rows.push_back({ b.name, it.name, it.path });
         }
@@ -53,13 +60,21 @@ std::vector<Box> parse_boxes(const std::wstring& text, int& bad) {
     const auto rows = parse_rows(text, 3, bad);
     std::vector<Box> boxes;
     for (const auto& r : rows) {
+        // 只有条目名与路径都为空的行才算“空盒子占位”。
+        // 空盒子名或空路径的行不可用（打开不了、也不知道放哪），跳过并计数，
+        // 不让它变成在界面上看得见却没什么可做的幽灵条目。
+        const bool placeholder = r[1].empty() && r[2].empty();
+        if (r[0].empty() || (!placeholder && r[2].empty())) {
+            ++bad;
+            continue;
+        }
         auto b = std::find_if(boxes.begin(), boxes.end(),
                               [&](const Box& x) { return x.name == r[0]; });
         if (b == boxes.end()) {
             boxes.push_back(Box{ r[0], {} });
             b = boxes.end() - 1;
         }
-        b->items.push_back(BoxItem{ r[1], r[2] });
+        if (!placeholder) b->items.push_back(BoxItem{ r[1], r[2] });
     }
     return boxes;
 }

@@ -11,6 +11,7 @@
 #include "launch.h"
 #include "model/paths.h"
 #include "text_io.h"
+#include "views/box.h"
 
 namespace sg {
 
@@ -186,6 +187,13 @@ static void app_set_view(App& app, View v) {
         launcher_sync_search(s, app.panel, app.render.client_logical(), app.render);
         s.launcher.search.focus();
     }
+    if (v == View::Box) {
+        s.box_view.sel = -1;
+        s.box_view.hover = -1;
+        s.box_view.scroll = 0;
+        box_clamp(s, app.render.client_logical());
+        ::SetFocus(app.panel);  // 网格视图自己收键盘，不需要子控件
+    }
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
@@ -274,10 +282,15 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_MOUSEWHEEL: {
             if (!app) return 0;
-            if (app->state.view != View::Launcher) return 0;
-            const int delta = GET_WHEEL_DELTA_WPARAM(wp);
-            LauncherState& ls = app->state.launcher;
-            ls.scroll = std::max(0, ls.scroll - (delta > 0 ? 1 : -1));
+            const int step = GET_WHEEL_DELTA_WPARAM(wp) > 0 ? -1 : 1;
+            if (app->state.view == View::Box) {
+                app->state.box_view.scroll = std::max(0, app->state.box_view.scroll + step);
+                box_clamp(app->state, app->render.client_logical());
+            } else if (app->state.view == View::Launcher) {
+                app->state.launcher.scroll = std::max(0, app->state.launcher.scroll + step);
+            } else {
+                return 0;
+            }
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
@@ -299,6 +312,9 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 switch (app->state.view) {
                     case View::Launcher:
                         launcher_render(app->render, app->state, cs);
+                        break;
+                    case View::Box:
+                        box_render(*app);
                         break;
                     default:
                         // Task 3 起换成真正的视图；这一行只用来证明切换真的生效
@@ -323,24 +339,33 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_MOUSEMOVE: {
             if (!app) return 0;
-            if (app->state.view != View::Launcher) return 0;
             const POINT phys{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             const D2D1_POINT_2F lpt = app->render.to_logical(phys);
             const D2D1_SIZE_F cs = app->render.client_logical();
 
-            if (app->internal_drag) {
-                const int over = launcher_tab_hittest(app->state, cs, lpt);
-                if (over != app->state.launcher.drag_over_tab) {
-                    app->state.launcher.drag_over_tab = over;
-                    ::InvalidateRect(hwnd, nullptr, FALSE);
-                }
-                return 0;
-            }
             if (app->in_drag) return 0;  // 外部 OLE 拖拽悬停中，不高亮悬停项
 
-            const int hit = launcher_hittest(app->state, cs, lpt);
-            if (hit != app->state.launcher.hover) {
-                app->state.launcher.hover = hit;
+            int hit = -1;
+            int& hover = (app->state.view == View::Box) ? app->state.box_view.hover
+                                                        : app->state.launcher.hover;
+            if (app->state.view == View::Box) {
+                hit = box_hittest(*app, lpt);
+            } else if (app->state.view == View::Launcher) {
+                if (app->internal_drag) {
+                    const int over = launcher_tab_hittest(app->state, cs, lpt);
+                    if (over != app->state.launcher.drag_over_tab) {
+                        app->state.launcher.drag_over_tab = over;
+                        ::InvalidateRect(hwnd, nullptr, FALSE);
+                    }
+                    return 0;
+                }
+                hit = launcher_hittest(app->state, cs, lpt);
+            } else {
+                return 0;
+            }
+
+            if (hit != hover) {
+                hover = hit;
                 if (!app->mouse_tracking) {
                     TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
                     ::TrackMouseEvent(&tme);
@@ -355,6 +380,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app) {
                 app->mouse_tracking = false;
                 app->state.launcher.hover = -1;
+                app->state.box_view.hover = -1;
                 ::InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
@@ -368,6 +394,22 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const int vt = view_tab_hittest(cs, lpt);
             if (vt >= 0) {
                 app_set_view(*app, static_cast<View>(vt));
+                return 0;
+            }
+            if (app->state.view == View::Box) {
+                const int tab = box_tab_hittest(app->state, cs, lpt);
+                if (tab >= 0) {
+                    app->state.box_view.box = tab;
+                    app->state.box_view.sel = -1;
+                    app->state.box_view.scroll = 0;
+                    box_clamp(app->state, cs);
+                    ::InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
+                const int hit = box_hittest(*app, lpt);
+                app->state.box_view.sel = hit;  // 点空白处 = 回到无选中态
+                if (hit >= 0) ::SetFocus(hwnd);
+                ::InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
             if (app->state.view != View::Launcher) return 0;
@@ -474,6 +516,10 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (app_view_hotkey(*app, static_cast<UINT>(wp))) return 0;
+            if (app->state.view == View::Box) {
+                box_keydown(*app, static_cast<UINT>(wp));
+                return 0;
+            }
             if (app->state.view != View::Launcher) return 0;
             if (wp == VK_RETURN) {
                 if (app->state.launcher.sel >= 0) launch_selected(*app);
@@ -537,6 +583,19 @@ void app_load(App& app) {
         s.groups.push_back(LaunchGroup{ L"常用", {} });
     }
 
+    // 收纳盒：与 launcher.txt 同一套（读不出来但存在 => 先备份 .bad）。
+    // 用单独的字符串接内容：复用 text 会把上一份文件的内容当成盒子解析（真陷阱）。
+    std::wstring boxes_text;
+    if (data_file_exists(app.paths, L"boxes.txt") &&
+        !load_text(app.paths, L"boxes.txt", boxes_text)) {
+        backup_bad(app.paths, L"boxes.txt");
+        ++s.bad_lines;
+    } else if (!boxes_text.empty()) {
+        int bad = 0;
+        s.boxes = parse_boxes(boxes_text, bad);
+        s.bad_lines += bad;
+    }
+
     if (load_text(app.paths, L"config.txt", text)) {
         int bad = 0;
         s.config = parse_config(text, bad);
@@ -566,6 +625,18 @@ void app_load(App& app) {
             const int vi = std::clamp(_wtoi(vw.c_str()), 0, kViewCount - 1);
             s.view = static_cast<View>(vi);
         }
+        // 上次的盒子：按名字匹配（盒子可被改名），匹配不到就用第一个。
+        // 这里只夹紧下标：scroll 的夹紧要等面板存在后才有客户区尺寸。
+        const std::wstring bn = config_get(ui, L"box", L"");
+        if (!bn.empty()) {
+            for (size_t i = 0; i < s.boxes.size(); ++i) {
+                if (s.boxes[i].name == bn) {
+                    s.box_view.box = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+        if (s.box_view.box >= static_cast<int>(s.boxes.size())) s.box_view.box = 0;
     }
     launcher_refilter(s);
 
@@ -581,7 +652,9 @@ void app_save_if_dirty(App& app) {
     AppState& s = app.state;
     if (!s.data_dirty) return;
     s.data_dirty = false;
-    if (!save_text(app.paths, L"launcher.txt", serialize_launcher(s.groups))) {
+    const bool ok = save_text(app.paths, L"launcher.txt", serialize_launcher(s.groups)) &&
+                    save_text(app.paths, L"boxes.txt", serialize_boxes(s.boxes));
+    if (!ok) {
         ::MessageBoxW(app.ctl, L"保存失败：程序目录可能已变为不可写。", L"Stargazer",
                       MB_ICONWARNING);
     }
@@ -616,6 +689,11 @@ void app_save_ui(App& app) {
         config_set(ui, L"group", app.state.groups[gi].name);
     }
     config_set(ui, L"view", std::to_wstring(static_cast<int>(app.state.view)));
+    if (!app.state.boxes.empty()) {
+        const int bi =
+            std::clamp(app.state.box_view.box, 0, static_cast<int>(app.state.boxes.size()) - 1);
+        config_set(ui, L"box", app.state.boxes[bi].name);
+    }
     save_text(app.paths, L"ui.txt", serialize_config(ui));
 }
 
@@ -651,6 +729,12 @@ void app_show(App& app) {
     if (s.view == View::Launcher) {
         launcher_sync_search(s, app.panel, app.render.client_logical(), app.render);
         s.launcher.search.focus();
+    } else if (s.view == View::Box) {
+        s.box_view.sel = -1;
+        s.box_view.hover = -1;
+        s.box_view.scroll = 0;
+        box_clamp(s, app.render.client_logical());
+        ::SetFocus(app.panel);
     }
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }

@@ -204,6 +204,48 @@ static void test_boxes_roundtrip() {
     CHECK_EQ(back[0].items[1].name, std::wstring(L"含\n换行"));
 }
 
+// 回归：空盒子必须能落盘并读回来（否则新建的盒子重启后就消失）
+static void test_empty_box_roundtrip() {
+    std::vector<sg::Box> boxes(2);
+    boxes[0].name = L"新盒子";  // 完全没有条目
+    boxes[1].name = L"归档";
+    boxes[1].items.push_back({ L"文档", L"C:\\temp" });
+
+    int bad = 0;
+    auto back = sg::parse_boxes(sg::serialize_boxes(boxes), bad);
+    CHECK_EQ(bad, 0);
+    CHECK_EQ(back.size(), size_t{2});
+    if (back.size() == 2) {  // 尺寸不对时不再索引，让 RED 打印失败而不是崩掉
+        CHECK_EQ(back[0].name, std::wstring(L"新盒子"));
+        CHECK_EQ(back[0].items.size(), size_t{0});  // 空盒子保住了，但没多出幽灵条目
+        CHECK_EQ(back[1].items.size(), size_t{1});
+        CHECK_EQ(back[1].items[0].path, std::wstring(L"C:\\temp"));
+    }
+}
+
+// 手改 boxes.txt：空盒子名 / 空路径的行不产生幽灵条目，且被计入坏行
+static void test_boxes_ghost_lines() {
+    // 第 1 行正常；第 2 行空路径；第 3 行空盒子名；第 4 行是空盒子的占位行
+    const std::wstring text =
+        L"工作\t有路径\tC:\\temp\n"
+        L"工作\t空路径\t\n"
+        L"\t无名盒\tC:\\a\n"
+        L"空盒\t\t\n";
+    int bad = 0;
+    auto back = sg::parse_boxes(text, bad);
+    CHECK_EQ(bad, 2);  // 空路径与空盒子名那两行算坏行
+    CHECK_EQ(back.size(), size_t{2});
+    if (back.size() == 2) {
+        CHECK_EQ(back[0].name, std::wstring(L"工作"));
+        CHECK_EQ(back[0].items.size(), size_t{1});  // 只有带路径的那行产生条目
+        if (back[0].items.size() == 1) {
+            CHECK_EQ(back[0].items[0].path, std::wstring(L"C:\\temp"));
+        }
+        CHECK_EQ(back[1].name, std::wstring(L"空盒"));
+        CHECK_EQ(back[1].items.size(), size_t{0});  // 占位行只建盒子不建条目
+    }
+}
+
 static void test_todos_roundtrip_and_sort() {
     std::vector<sg::TodoItem> todos;
     todos.push_back({ 1, false, 100, 0, 0, L"普通" });
@@ -286,6 +328,8 @@ int main() {
     test_launcher_roundtrip_and_bad_line();
     test_empty_group_roundtrip();
     test_boxes_roundtrip();
+    test_empty_box_roundtrip();
+    test_boxes_ghost_lines();
     test_todos_roundtrip_and_sort();
     test_config();
     test_premultiply_bgra();
