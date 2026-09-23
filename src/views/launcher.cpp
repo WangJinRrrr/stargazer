@@ -4,28 +4,15 @@
 #include <shellapi.h>  // ShellExecuteW（打开所在位置）
 
 #include "app.h"  // 右键菜单需要完整的 App 定义
-#include "icons.h"
-#include "model/paths.h"
 #include "model/search.h"
 
 namespace sg {
 
-D2D1_COLOR_F ext_color(const std::wstring& path) {
-    // 固定 8 色调色板：扩展名哈希取模，同一类型总是同色且重启不变
-    static const D2D1_COLOR_F palette[8] = {
-        D2D1::ColorF(0.35f, 0.45f, 0.62f), D2D1::ColorF(0.32f, 0.53f, 0.48f),
-        D2D1::ColorF(0.58f, 0.44f, 0.35f), D2D1::ColorF(0.50f, 0.38f, 0.55f),
-        D2D1::ColorF(0.40f, 0.48f, 0.36f), D2D1::ColorF(0.58f, 0.38f, 0.42f),
-        D2D1::ColorF(0.34f, 0.42f, 0.56f), D2D1::ColorF(0.45f, 0.45f, 0.45f),
-    };
-    const std::wstring ext = extension_of(path);
-    if (ext.empty()) return palette[7];
-    unsigned h = 2166136261u;  // FNV-1a
-    for (wchar_t c : ext) {
-        h ^= static_cast<unsigned>(c);
-        h *= 16777619u;
-    }
-    return palette[h % 8];
+// 启动板网格的纵向起点：分组标签行 + 搜索框 + 内边距（逻辑 DIP）
+static float launcher_grid_top() { return kPad + kTabsH + kSearchH + kPad; }
+
+static GridLayout launcher_grid(D2D1_SIZE_F client) {
+    return grid_measure(client.width, client.height, launcher_grid_top());
 }
 
 D2D1_RECT_F launcher_tabs_rect(D2D1_SIZE_F client) {
@@ -42,22 +29,13 @@ static float tab_width(const std::wstring& name) {
 
 void launcher_layout(const AppState& s, D2D1_SIZE_F client, int& cols, int& rows_visible) {
     (void)s;
-    const float avail_w = client.width - kPad * 2.f;
-    const float avail_h = client.height - kTabsH - kSearchH - kPad * 2.f;
-    cols = static_cast<int>((avail_w + kGap) / (kCell + kGap));
-    if (cols < 1) cols = 1;
-    rows_visible = static_cast<int>((avail_h + kGap) / (kCell + kGap));
-    if (rows_visible < 1) rows_visible = 1;
+    const GridLayout gl = launcher_grid(client);
+    cols = gl.cols;
+    rows_visible = gl.rows_visible;
 }
 
 D2D1_RECT_F launcher_cell_rect(const AppState& s, D2D1_SIZE_F client, int filtered_index) {
-    int cols = 1, rows = 1;
-    launcher_layout(s, client, cols, rows);
-    const int col = filtered_index % cols;
-    const int row = filtered_index / cols - s.launcher.scroll;
-    const float x = kPad + col * (kCell + kGap);
-    const float y = kPad + kTabsH + kSearchH + kPad + row * (kCell + kGap);
-    return D2D1::RectF(x, y, x + kCell, y + kCell);
+    return grid_cell_rect(launcher_grid(client), filtered_index, s.launcher.scroll);
 }
 
 void launcher_refilter(AppState& s) {
@@ -96,23 +74,9 @@ int launcher_tab_hittest(const AppState& s, D2D1_SIZE_F client, D2D1_POINT_2F pt
 }
 
 int launcher_hittest(const AppState& s, D2D1_SIZE_F client, D2D1_POINT_2F pt) {
-    const float search_bottom = launcher_search_rect(client).bottom;
-    if (pt.y < search_bottom) return -1;  // 搜索框区域归 EDIT 子控件
-
-    int cols = 1, rows = 1;
-    launcher_layout(s, client, cols, rows);
-    const float gx = pt.x - kPad;
-    const float gy = pt.y - (kPad + kTabsH + kSearchH + kPad);
-    if (gx < 0 || gy < 0) return -1;
-    const int col = static_cast<int>(gx / (kCell + kGap));
-    const int row = static_cast<int>(gy / (kCell + kGap));
-    // 落在格子间隙里也算没命中，避免“点空白就启动了程序”
-    if (gx - col * (kCell + kGap) > kCell) return -1;
-    if (gy - row * (kCell + kGap) > kCell) return -1;
-    if (col >= cols) return -1;
-    const int idx = (row + s.launcher.scroll) * cols + col;
-    if (idx < 0 || idx >= static_cast<int>(s.launcher.filtered.size())) return -1;
-    return idx;
+    // 搜索框区域归 EDIT 子控件：网格 top 之上不算命中（grid_hittest 内部同样拒收）
+    return grid_hittest(launcher_grid(client), static_cast<int>(s.launcher.filtered.size()),
+                        s.launcher.scroll, pt);
 }
 
 void launcher_render(Renderer& r, AppState& s, D2D1_SIZE_F client) {
@@ -145,51 +109,24 @@ void launcher_render(Renderer& r, AppState& s, D2D1_SIZE_F client) {
                r.format(13.f), r.theme.text_dim);
     }
 
-    int cols = 1, rows = 1;
-    launcher_layout(s, client, cols, rows);
-    const int total_rows = (static_cast<int>(ls.filtered.size()) + cols - 1) / cols;
-    ls.scroll = std::clamp(ls.scroll, 0, std::max(0, total_rows - rows));
+    const GridLayout gl = launcher_grid(client);
+    ls.scroll = grid_clamp_scroll(gl, static_cast<int>(ls.filtered.size()), ls.scroll);
 
-    IDWriteTextFormat* name_fmt =
-        r.format(12.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
+    std::vector<GridItem> cells;
+    cells.reserve(ls.filtered.size());
     for (size_t i = 0; i < ls.filtered.size(); ++i) {
-        const int row = static_cast<int>(i) / cols;
-        if (row < ls.scroll || row >= ls.scroll + rows) continue;  // 只画可见行（虚拟化）
-
-        const D2D1_RECT_F rc = launcher_cell_rect(s, client, static_cast<int>(i));
-        const bool selected = static_cast<int>(i) == ls.sel;
-
-        if (selected) {
-            r.fill_round_rect(rc, 8.f, r.theme.accent);
-        } else if (static_cast<int>(i) == ls.hover) {
-            r.fill_round_rect(rc, 8.f, r.theme.hover);
-        }
-
         const LaunchItem& item = s.groups[ls.group].items[ls.filtered[i]];
-        const std::wstring icon_src = item.icon.empty() ? item.target : item.icon;
-        const bool is_dir = !icon_src.empty() && icon_src.back() == L'\\';
-
-        const float ix = rc.left + (kCell - 48.f) / 2.f;
-        const float iy = rc.top + 8.f;
-        const D2D1_RECT_F irect = D2D1::RectF(ix, iy, ix + 48.f, iy + 48.f);
-        if (ID2D1Bitmap* bmp = icons_get(r, icon_src, is_dir)) {
-            r.rt->DrawBitmap(bmp, irect, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-        } else {
-            // 图标未就绪：扩展名色块 + 首字母（骨架先出，图标后到）
-            r.fill_round_rect(irect, 8.f, ext_color(icon_src));
-            const std::wstring initial =
-                item.name.empty() ? std::wstring(L"?") : item.name.substr(0, 1);
-            r.text(irect, initial,
-                   r.format(20.f, DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER),
-                   D2D1::ColorF(1.f, 1.f, 1.f));
-        }
-
-        const D2D1_RECT_F label =
-            D2D1::RectF(rc.left + 4.f, iy + 48.f + 4.f, rc.right - 4.f, rc.bottom - 4.f);
-        const D2D1_COLOR_F label_color =
-            selected ? D2D1::ColorF(1.f, 1.f, 1.f) : r.theme.text;
-        r.text(label, item.name, name_fmt, label_color);
+        GridItem gi;
+        gi.label = item.name;
+        gi.icon_src = item.icon.empty() ? item.target : item.icon;
+        gi.is_dir = !gi.icon_src.empty() && gi.icon_src.back() == L'\\';
+        gi.selected = static_cast<int>(i) == ls.sel;
+        gi.hovered = static_cast<int>(i) == ls.hover;
+        gi.missing = false;
+        cells.push_back(std::move(gi));
     }
+    grid_render(r, gl, cells, ls.scroll, r.theme.accent, r.theme.hover, r.theme.text,
+                r.theme.text_dim);
 
     if (ls.filtered.empty() && !s.groups.empty()) {
         r.text(D2D1::RectF(kPad, 120.f, client.width - kPad, 180.f), L"没有匹配的条目",
@@ -199,43 +136,8 @@ void launcher_render(Renderer& r, AppState& s, D2D1_SIZE_F client) {
 
 bool launcher_keydown(AppState& s, D2D1_SIZE_F client, UINT vk) {
     LauncherState& ls = s.launcher;
-    int cols = 1, rows = 1;
-    launcher_layout(s, client, cols, rows);
-    const int count = static_cast<int>(ls.filtered.size());
-
-    switch (vk) {
-        case VK_DOWN:
-            // 从搜索框进入网格
-            ls.sel = (ls.sel < 0) ? (count > 0 ? 0 : -1) : std::min(ls.sel + cols, count - 1);
-            break;
-        case VK_UP:
-            if (ls.sel >= 0 && ls.sel < cols) {
-                ls.sel = -1;  // 回到搜索框
-            } else {
-                ls.sel = std::max(0, ls.sel - cols);
-            }
-            break;
-        case VK_LEFT:
-            ls.sel = std::max(0, ls.sel - 1);
-            break;
-        case VK_RIGHT:
-            ls.sel = std::min(count - 1, ls.sel + 1);
-            break;
-        case VK_PRIOR:
-            ls.scroll = std::max(0, ls.scroll - rows);
-            break;
-        case VK_NEXT:
-            ls.scroll += rows;
-            break;
-        default:
-            return false;
-    }
-
-    // 选中项必须在可见范围内
-    if (ls.sel >= 0) {
-        ls.scroll = std::clamp(ls.scroll, std::max(0, ls.sel / cols - rows + 1), ls.sel / cols);
-    }
-    return true;
+    const GridLayout gl = launcher_grid(client);
+    return grid_keydown(gl, static_cast<int>(ls.filtered.size()), ls.sel, ls.scroll, vk);
 }
 
 void launcher_sync_search(AppState& s, HWND parent, D2D1_SIZE_F client, Renderer& r) {

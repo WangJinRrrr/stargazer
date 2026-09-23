@@ -3,15 +3,12 @@
 #include <windows.h>
 
 #include "viewapi.h"
+#include "views/grid.h"  // kCell/kGap/kPad/kTabsH/kSearchH 与网格算法都在这里
 
 namespace sg {
 
-// 启动板布局常量（均为 96 DPI 逻辑像素）
-constexpr float kCell = 96.f;
-constexpr float kGap = 8.f;
-constexpr float kPad = 16.f;
-constexpr float kTabsH = 36.f;
-constexpr float kSearchH = 34.f;
+// 启动板自己的布局：视图标签行/分组标签行/搜索框都不属于共用网格，
+// 这里只保留纵向拼装（常量来自 grid.h，不另写一份）。
 
 // 坐标约定：client 一律是逻辑 DIP（Renderer::client_logical()），
 // 鼠标点先经 Renderer::to_logical()，交给 InlineEdit 的矩形先经 Renderer::to_physical()。
@@ -37,9 +34,6 @@ D2D1_RECT_F launcher_cell_rect(const AppState& s, D2D1_SIZE_F client, int filter
 
 // 把搜索框 EDIT 对齐到布局位置；未打开则打开（呼出时调用）
 void launcher_sync_search(AppState& s, HWND parent, D2D1_SIZE_F client, Renderer& r);
-
-// 按扩展名给占位块配色，同一扩展名总是同一颜色
-D2D1_COLOR_F ext_color(const std::wstring& path);
 
 // --- 条目与分组管理 ---
 
