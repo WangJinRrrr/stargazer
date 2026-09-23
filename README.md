@@ -44,6 +44,8 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 - 窗口拖动：顶部标签行的空白处按住拖动（标签本身是点击区，不会把点击变成拖窗口）；
   四边四角 6px 内可缩放。窗口外框是 Win11 的圆角 + 系统投影（DWM 属性，失败则退为直角）
 - 呼出热键 `Ctrl+Shift+Space`（固定在代码里，见「已知限制」）；再次按同一热键、按 `Esc`、或托盘菜单均可隐藏
+- **位置记忆**：隐藏后再呼出就停在原来那个地方（不会跳回屏幕中央）；位置与尺寸记在 `ui.txt`，
+  首次启动才居中于鼠标所在显示器。显示器拔了 / 分辨率变了会自动夹回工作区
 
 ### 收纳盒
 
@@ -58,7 +60,7 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 - **失效检测**：呼出时由第二条工作线程批量校验存在性，指向的文件被改名或删除后该条目会灰显并加删除线，
   其余条目照常用；文件改回来就恢复。校验是异步的，断开的网盘不会卡住界面
 
-顶部标题条可拖动移动窗口，四边与四角可缩放（尺寸记在 `ui.txt`）；滚轮滚动网格。
+顶部标题条可拖动移动窗口，四边与四角可缩放（尺寸与位置记在 `ui.txt`）；滚轮滚动网格。
 
 ### 待办（随手一记）
 
@@ -91,7 +93,7 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 | `boxes.txt` | `盒子 \t 名称 \t 路径`（空盒子写一行“盒子名 + 两个空字段”的占位行） |
 | `todo.txt` | `id \t done \t created \t kind \t text \t attach`（`kind` = `text`/`link`/`image`） |
 | `config.txt` | `键 \t 值`；目前只有 `browse_root`（浏览的根目录，由托盘菜单写入） |
-| `ui.txt` | 窗口尺寸（逻辑像素）、上次视图（`0` 收纳盒 / `1` 待办 / `2` 浏览）、上次盒子 |
+| `ui.txt` | 窗口尺寸（逻辑像素）、位置（物理像素）、上次视图（`0` 收纳盒 / `1` 待办 / `2` 浏览）、上次盒子 |
 
 UTF-8 编码、无 BOM，行内 Tab 分隔，字段内 `|` `Tab` `换行` 分别写作 `||` `|t` `|n`。
 

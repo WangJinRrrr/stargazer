@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <climits>
 #include <string>
 #include <vector>
 
@@ -70,10 +71,13 @@ struct AppState {
     TodoState todo;
     BrowseState browse;
     bool data_dirty = false;
-    // ui.txt 里想要的窗口尺寸（逻辑像素）。0 = 用默认值。
-    // 存起来等面板真正创建时再应用：app_load 跑在面板存在之前，那里改尺寸是死代码。
+    // ui.txt 里想要的窗口尺寸（逻辑像素）与位置（**物理像素**，INT_MIN = 没记过）。
+    // 尺寸存起来等面板真正创建时再应用；位置在呼出时用，_MIN 时回退到“光标所在显示器居中”。
+    // 位置只能存物理像素：DIP 没有绝对原点，跨不同缩放的显示器时只有物理坐标能用。
     int ui_w = 0;
-    int ui_h = 0;  // 变更后由 app 层落盘
+    int ui_h = 0;
+    int ui_x = INT_MIN;
+    int ui_y = INT_MIN;
 };
 
 }  // namespace sg

@@ -137,7 +137,10 @@ D2D 表面是不透明的，所以**不做** `SYSTEMBACKDROP_TYPE` 的 Mica/亚�
 代价：窗口会一直浮在其它窗口之上直到被主动关掉（`WS_EX_TOPMOST`）。这是有意的取舍：它是“呼出型”面板，
 宁可你不想要时按一下 `Esc`，也不要你想要时它自己不见了。
 
-呼出定位：`GetCursorPos` → `MonitorFromPoint` → `GetMonitorInfo().rcWork`，窗口居中于鼠标所在显示器，clamp 到工作区避免压任务栏。提供"跟随鼠标位置"选项。
+**呼出定位**：记忆上次位置（`ui.txt` 的 `x` / `y`，**物理像素**），隐藏再呼出不会把窗口挪回屏幕中央；
+首次呼出（`ui.txt` 里没记过）才居中于鼠标所在显示器。两种情况都会先夹进目标显示器的工作区
+（`MonitorFromPoint(MONITOR_DEFAULTTONEAREST)` → `rcWork`），显示器拔掉或分辨率变了也不会把窗口留在看不见的地方。
+位置在拖动结束（`WM_EXITSIZEMOVE`）与退出时落盘。
 
 **空闲开销**：窗口隐藏后消息循环阻塞在 `GetMessage`，无定时器、无轮询、无重绘。这是内存与 CPU 指标的实现基础。
 

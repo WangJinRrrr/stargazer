@@ -817,6 +817,13 @@ void app_load(App& app) {
             s.ui_w = _wtoi(w.c_str());
             s.ui_h = _wtoi(h.c_str());
         }
+        // 上次的窗口位置（物理像素）。手改越界/显示器变了时会在 app_show 里夹回工作区
+        const std::wstring px = config_get(ui, L"x", L"");
+        const std::wstring py = config_get(ui, L"y", L"");
+        if (!px.empty() && !py.empty()) {
+            s.ui_x = _wtoi(px.c_str());
+            s.ui_y = _wtoi(py.c_str());
+        }
         // 上次的视图（0 基，与 View 枚举一致）。手改越界时夹紧
         const std::wstring vw = config_get(ui, L"view", L"");
         if (!vw.empty()) {
@@ -892,13 +899,18 @@ void app_request_fs_checks(App& app) {
 
 void app_save_ui(App& app) {
     if (!app.panel) return;
-    // 尺寸存逻辑像素：这样换到不同缩放的显示器上尺寸语义不变
+    // 尺寸存逻辑像素：这样换到不同缩放的显示器上尺寸语义不变；
+    // 位置存**物理像素**：DIP 没有绝对原点，屏幕坐标才是可用的地址。
     const float sc = app.render.scale();
     RECT rc{};
     ::GetWindowRect(app.panel, &rc);
     Config ui;
     config_set(ui, L"w", std::to_wstring(static_cast<int>((rc.right - rc.left) / sc)));
     config_set(ui, L"h", std::to_wstring(static_cast<int>((rc.bottom - rc.top) / sc)));
+    config_set(ui, L"x", std::to_wstring(rc.left));
+    config_set(ui, L"y", std::to_wstring(rc.top));
+    app.state.ui_x = rc.left;  // 内存里也跟着走，下一次呼出就不再居中
+    app.state.ui_y = rc.top;
     config_set(ui, L"view", std::to_wstring(static_cast<int>(app.state.view)));
     if (!app.state.boxes.empty()) {
         const int bi =
@@ -908,22 +920,48 @@ void app_save_ui(App& app) {
     save_text(app.paths, L"ui.txt", serialize_config(ui));
 }
 
-void app_show(App& app) {
-    if (!ensure_panel(app)) return;
-
-    POINT pt{};
-    ::GetCursorPos(&pt);
-    const HMONITOR mon = ::MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+// 某个点所在显示器的工作区（托盘/任务栏之外的那块）。
+// MonitorFromPoint 带 DEFAULTNEAREST：位置已经跑到所有显示器之外时，
+// 会给出最近的那块 —— 所以下面那个夹紧一定有一个可用的工作区。
+static RECT work_area_for(int x, int y) {
+    const HMONITOR mon = ::MonitorFromPoint(POINT{ x, y }, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi{};
     mi.cbSize = sizeof(mi);
-    ::GetMonitorInfoW(mon, &mi);
+    if (!::GetMonitorInfoW(mon, &mi)) {
+        return RECT{ 0, 0, ::GetSystemMetrics(SM_CXSCREEN), ::GetSystemMetrics(SM_CYSCREEN) };
+    }
+    return mi.rcWork;
+}
+
+void app_show(App& app) {
+    if (!ensure_panel(app)) return;
 
     RECT rc{};
     ::GetWindowRect(app.panel, &rc);
     const int w = rc.right - rc.left;
     const int h = rc.bottom - rc.top;
-    const int x = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - w) / 2;
-    const int y = mi.rcWork.top + ((mi.rcWork.bottom - mi.rcWork.top) - h) / 2;
+
+    AppState& s = app.state;
+    int x = 0;
+    int y = 0;
+    if (s.ui_x != INT_MIN && s.ui_y != INT_MIN) {
+        // 记过位置就用它：隐藏再呼出不该把窗口挪回屏幕中央。
+        // 夹进工作区：显示器拔了/分辨率变了之后，旧坐标可能落在看不见的地方。
+        const RECT wa = work_area_for(s.ui_x, s.ui_y);
+        x = std::clamp(s.ui_x, static_cast<int>(wa.left),
+                       std::max(static_cast<int>(wa.left), static_cast<int>(wa.right) - w));
+        y = std::clamp(s.ui_y, static_cast<int>(wa.top),
+                       std::max(static_cast<int>(wa.top), static_cast<int>(wa.bottom) - h));
+    } else {
+        // 首次呼出（ui.txt 里没记过）：居中于鼠标所在显示器
+        POINT pt{};
+        ::GetCursorPos(&pt);
+        const RECT wa = work_area_for(pt.x, pt.y);
+        x = wa.left + ((wa.right - wa.left) - w) / 2;
+        y = wa.top + ((wa.bottom - wa.top) - h) / 2;
+    }
+    s.ui_x = x;  // 本会话内后续的呼出直接沿用这个位置
+    s.ui_y = y;
 
     ::SetWindowPos(app.panel, HWND_TOPMOST, x, y, w, h, SWP_SHOWWINDOW);
     ::SetForegroundWindow(app.panel);
@@ -932,7 +970,6 @@ void app_show(App& app) {
     images_forget_failures();  // 每次呼出重新给取不到缩略图的条目一次机会
 
     // 每次呼出都从干净状态开始：选中态归位（输入框在下面按视图处理）
-    AppState& s = app.state;
     if (s.view == View::Box) {
         s.box_view.sel = -1;
         s.box_view.hover = -1;
