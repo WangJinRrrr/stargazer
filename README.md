@@ -5,7 +5,7 @@
 
 MIT 许可证，见 [LICENSE](LICENSE)。
 
-**下载**：到 [Releases](https://github.com/WangJinRrrr/stargazer/releases/latest) 取 `Stargazer-1.0.0-win64.zip`，
+**下载**：到 [Releases](https://github.com/WangJinRrrr/stargazer/releases/latest) 取最新的 `Stargazer-<版本>-win64.zip`，
 解压到任意可写目录双击 `stargazer.exe` 即可（免安装、免运行库）；想自己编译见下。
 
 **更新**：用新的 `stargazer.exe` 覆盖旧的就行 —— 程序是单文件便携的，`data\` 是你的数据，不会被碰。
@@ -52,9 +52,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1 `
   -ConfigureArgs '-DCMAKE_GENERATOR_INSTANCE="<VS 安装目录>,version=<实例版本>"'
 ```
 
-会先跑三个测试套件当发布闸门（不过就不打包），产物在 `dist\Stargazer-<版本>-win64.zip`：
-`stargazer.exe` + `README.md` + `LICENSE`，解压即用。版本号只有一处：`resources\stargazer.rc` 的
-VERSIONINFO，脚本构建后从 exe 里读回来，不在别处再维护一份；同时打印 exe 的 SHA256 方便对照。
+会先跑三个测试套件当发布闸门（不过就不打包），产物在 `dist\Stargazer-<版本>-win64.zip`。
+包内结构与 1.0.0 一致：顶层是 `Stargazer-<版本>-win64\`，里面放 `stargazer.exe`、
+`使用说明.txt`（仓库根目录那份纯文本快速上手，与 README 分开维护）、`LICENSE`，以及一个空的 `data\`。
+版本号只有一处：`resources\stargazer.rc` 的 VERSIONINFO，脚本构建后从 exe 里读回来，
+不在别处再维护一份；同时打印 exe 的 SHA256 方便对照。
 
 加 `-Update` 额外产出 `dist\Stargazer-<版本>-update.zip`：里面只有一个 exe，老用户解开覆盖即可，
 `data\` 原地不动。注：单文件便携程序的完整包也只有 238 KB，其中 230 KB 就是那个 exe ——

@@ -48,18 +48,23 @@ $ver = (Get-Item $exe).VersionInfo.ProductVersion
 if (-not $ver) { throw 'exe 里没有版本信息' }
 $semver = ($ver -split '\.')[0..2] -join '.'
 
-# 5) 打 zip
+# 5) 打 zip：包内结构与 1.0.0 一致 —— 顶层一个带版本号的文件夹，
+#    里面是 exe + 使用说明.txt + LICENSE + 一个空的 data\（让用户一眼看到数据放哪）
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 New-Item -ItemType Directory -Force $dist | Out-Null
 $stage = Join-Path $dist "_stage_$semver"
+$inner = Join-Path $stage "Stargazer-$semver-win64"
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force $stage | Out-Null
-Copy-Item $exe $stage
-Copy-Item (Join-Path $root 'README.md') $stage
-Copy-Item (Join-Path $root 'LICENSE') $stage
+New-Item -ItemType Directory -Force $inner, (Join-Path $inner 'data') | Out-Null
+Copy-Item $exe $inner
+Copy-Item (Join-Path $root '使用说明.txt') $inner
+Copy-Item (Join-Path $root 'LICENSE') $inner
 
 $zip = Join-Path $dist "Stargazer-$semver-win64.zip"
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
-Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip
+# 用 ZipFile 而不是 Compress-Archive：后者会把空目录丢掉（data\ 就进不了包）
+[IO.Compression.ZipFile]::CreateFromDirectory(
+    $inner, $zip, [IO.Compression.CompressionLevel]::Optimal, $true)
 Remove-Item $stage -Recurse -Force
 
 $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
