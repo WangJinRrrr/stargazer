@@ -22,10 +22,6 @@ void dragdrop_set_hook(std::function<void(const std::vector<std::wstring>&)> hoo
 // 把 App::in_drag 的地址交给拖放层；外部拖拽悬停期间为 true（抑制悬停高亮更新）
 void dragdrop_set_drag_flag(bool* flag);
 
-// TEMP(Task 8 删除)：直接调用已注册的拖入回调，用来在无法模拟 OLE 拖放的环境里
-// 验证“拖入按当前视图分发”这段粘连代码。
-void dragdrop_test_invoke(const std::vector<std::wstring>& paths);
-
 // 拖出：把 paths 以 CF_HDROP 交给系统做 OLE 拖放（会被资源管理器等接收方当成“粘贴文件”）。
 // 内部跑嵌套消息循环，调用方需在此期间抑制悬停高亮（App::in_drag）。
 // 返回 true 表示拖放被接收（Esc 取消或没有接收方时返回 false）。
