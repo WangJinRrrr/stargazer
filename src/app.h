@@ -59,5 +59,7 @@ void app_show(App& app);
 void app_hide(App& app);
 void app_toggle(App& app);
 void app_shutdown(App& app);
+// 非致命提示（托盘气泡）。视图层用它报错，不弹模态框（spec §12）
+void app_notify(App& app, const std::wstring& text);
 
 }  // namespace sg

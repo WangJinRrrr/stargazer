@@ -1,15 +1,61 @@
 #include "views/todo.h"
 
+#include <shellapi.h>  // ShellExecuteW
+
 #include <algorithm>
 #include <ctime>
 
 #include "app.h"
+#include "clipboard.h"
 #include "icons.h"
 #include "model/paths.h"
 
 namespace sg {
 
 namespace {
+
+// attach 是不是我们自己的副本，且删掉 except_id 这条之后就没别人在用了
+bool copy_is_orphan(const App& app, long long except_id, const std::wstring& attach) {
+    const AppState& s = app.state;
+    if (attach.empty()) return false;
+    const std::wstring images = join_path(app.paths.data_dir, L"images");
+    if (!todo_is_owned_copy(images, attach)) return false;
+    std::vector<std::wstring> others;
+    for (const auto& t : s.todos) {
+        if (t.id == except_id) continue;
+        if (!t.attach.empty()) others.push_back(t.attach);
+    }
+    return !todo_copy_still_used(others, attach);
+}
+
+// 删条目时的唯一磁盘副作用：删掉它的图片副本（仅限 data\images 下、且已无人引用）
+void drop_owned_copy(const App& app, long long id, const std::wstring& attach) {
+    if (!copy_is_orphan(app, id, attach)) return;
+    const DWORD attr = ::GetFileAttributesW(attach.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES) return;
+    if ((attr & FILE_ATTRIBUTE_DIRECTORY) != 0) return;  // 手改数据把目录塞进来时不动它
+    ::DeleteFileW(attach.c_str());  // 失败就不管：清缓存失败不值得打断用户
+}
+
+// 数据变了之后统一收尾
+void after_change(App& app) {
+    AppState& s = app.state;
+    sort_todos(s.todos);
+    todo_rebuild_layout(s, app.render.client_logical());
+    s.data_dirty = true;
+    ::InvalidateRect(app.panel, nullptr, FALSE);
+}
+
+// 排序后按 id 找回选中行（切换完成态会让行号变）
+void reselect_by_id(AppState& s, long long id) {
+    s.todo.sel = -1;
+    for (size_t i = 0; i < s.todos.size(); ++i) {
+        if (s.todos[i].id == id) {
+            s.todo.sel = static_cast<int>(i);
+            break;
+        }
+    }
+}
 
 // 文本宽度（给链接下划线用）。取不到就返回 0，不影响其它绘制。
 float text_width(Renderer& r, const std::wstring& s, IDWriteTextFormat* fmt, float max_w) {
@@ -199,10 +245,37 @@ bool todo_keydown(App& app, UINT vk) {
     const float viewport = list.bottom - list.top;
     const int rows = todo_rows_visible(app.render.client_logical());
 
+    const bool ctrl = (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift = (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    if (ctrl && vk == L'C') {
+        todo_copy_selected(app);
+        return true;
+    }
+    if (ctrl && shift && vk == L'D') {
+        todo_clear_done(app);
+        return true;
+    }
+    if (ctrl && vk == L'V') {
+        todo_add_from_clipboard(app);
+        return true;
+    }
+
     switch (vk) {
         case VK_DOWN:
             if (n > 0) t.sel = (t.sel < 0) ? 0 : std::min(t.sel + 1, n - 1);
             break;
+        case VK_SPACE:
+            todo_toggle_done(app);
+            return true;
+        case VK_RETURN:
+            todo_open_selected(app);
+            return true;
+        case VK_DELETE:
+            todo_delete_selected(app);
+            return true;
+        case VK_F2:
+            todo_rename_selected(app);
+            return true;
         case VK_UP:
             if (n == 0) break;
             if (t.sel <= 0) {
@@ -331,6 +404,192 @@ bool todo_add_from_paths(App& app, const std::vector<std::wstring>& paths) {
 void todo_on_image_saved(App& app, uint64_t request_id) {
     (void)app;
     (void)request_id;
+}
+
+void todo_toggle_done(App& app) {
+    AppState& s = app.state;
+    TodoState& t = s.todo;
+    if (t.sel < 0 || t.sel >= static_cast<int>(s.todos.size())) return;
+    const long long id = s.todos[static_cast<size_t>(t.sel)].id;
+    s.todos[static_cast<size_t>(t.sel)].done = !s.todos[static_cast<size_t>(t.sel)].done;
+    after_change(app);
+    reselect_by_id(s, id);  // 沉底后选中跟着走，不会“跳”到别的条目
+    ::InvalidateRect(app.panel, nullptr, FALSE);
+}
+
+void todo_delete_selected(App& app) {
+    AppState& s = app.state;
+    TodoState& t = s.todo;
+    if (t.sel < 0 || t.sel >= static_cast<int>(s.todos.size())) return;
+    const long long id = s.todos[static_cast<size_t>(t.sel)].id;
+    const std::wstring attach = s.todos[static_cast<size_t>(t.sel)].attach;
+    s.todos.erase(s.todos.begin() + t.sel);
+    drop_owned_copy(app, id, attach);  // 已经从数组里剔除了；还有别的条目引用就不删
+    after_change(app);
+    if (t.sel >= static_cast<int>(s.todos.size())) {
+        t.sel = s.todos.empty() ? -1 : static_cast<int>(s.todos.size()) - 1;
+    }
+    todo_rebuild_layout(s, app.render.client_logical());
+    ::InvalidateRect(app.panel, nullptr, FALSE);
+}
+
+void todo_clear_done(App& app) {
+    AppState& s = app.state;
+    std::vector<std::pair<long long, std::wstring>> gone;
+    for (const auto& t : s.todos) {
+        if (t.done) gone.emplace_back(t.id, t.attach);
+    }
+    if (gone.empty()) {
+        app_notify(app, L"没有已完成的条目");
+        return;
+    }
+    // 先整体剔除，再逐个判断副本是否还有人用（否则两条都指向同一张图时会误删）
+    s.todos.erase(std::remove_if(s.todos.begin(), s.todos.end(),
+                                 [](const TodoItem& t) { return t.done; }),
+                  s.todos.end());
+    for (const auto& g : gone) drop_owned_copy(app, g.first, g.second);
+    s.todo.sel = -1;
+    s.todo.scroll = 0.f;
+    after_change(app);
+}
+
+void todo_open_selected(App& app) {
+    AppState& s = app.state;
+    TodoState& t = s.todo;
+    if (t.sel < 0 || t.sel >= static_cast<int>(s.todos.size())) return;
+    const TodoItem& item = s.todos[static_cast<size_t>(t.sel)];
+    if (item.kind == TodoKind::Text) return;  // 文字条目回车不该有副作用
+    const std::wstring target = (item.kind == TodoKind::Link) ? item.text : item.attach;
+    if (target.empty()) return;
+    if (item.missing) {
+        app_notify(app, L"图片已不存在：" + target);
+        return;
+    }
+    const HINSTANCE r =
+        ::ShellExecuteW(nullptr, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(r) <= 32) {
+        app_notify(app, L"打不开：" + target);
+        return;
+    }
+    app_hide(app);  // 与收纳盒/浏览一致：别让 TOPMOST 挡住刚打开的东西
+}
+
+void todo_reveal_selected(App& app) {
+    const AppState& s = app.state;
+    if (s.todo.sel < 0 || s.todo.sel >= static_cast<int>(s.todos.size())) return;
+    const std::wstring attach = s.todos[static_cast<size_t>(s.todo.sel)].attach;
+    if (attach.empty()) return;
+    const std::wstring arg = L"/select," + attach;
+    ::ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
+}
+
+void todo_copy_selected(App& app) {
+    AppState& s = app.state;
+    TodoState& t = s.todo;
+    if (t.sel < 0 || t.sel >= static_cast<int>(s.todos.size())) return;
+    const TodoItem& item = s.todos[static_cast<size_t>(t.sel)];
+    if (item.kind == TodoKind::Image) {
+        if (item.attach.empty()) return;
+        clipboard_set_paths({ item.attach }, false);  // 粘到资源管理器就是“粘贴文件”
+        app_notify(app, L"已复制图片路径");
+        return;
+    }
+    if (item.text.empty()) return;
+    clipboard_set_text(item.text);
+    app_notify(app, L"已复制文字");
+}
+
+void todo_rename_selected(App& app) {
+    AppState& s = app.state;
+    TodoState& t = s.todo;
+    if (t.sel < 0 || t.sel >= static_cast<int>(s.todos.size())) return;
+    const TodoItem& item = s.todos[static_cast<size_t>(t.sel)];
+    if (item.kind == TodoKind::Image) {
+        app_notify(app, L"图片条目没有文字可改（删了重记或改文件名）");
+        return;
+    }
+    const D2D1_RECT_F list = todo_list_rect(app.render.client_logical());
+    const float top = list.top + t.offsets[static_cast<size_t>(t.sel)] - t.scroll;
+    const D2D1_RECT_F input =
+        D2D1::RectF(list.left, top, list.right, top + todo_row_height(item.kind));
+    const RECT rc = app.render.to_physical(input);
+    const long long id = item.id;
+    const std::wstring current = item.text;
+    t.edit.open(
+        app.panel, rc, current, app.render.dpi,
+        [&app, id, current](const std::wstring& text) {
+            AppState& st = app.state;
+            if (!text.empty() && text != current) {
+                for (auto& it : st.todos) {
+                    if (it.id == id) {
+                        it.text = text;
+                        // 改文字不改类型：链接仍是链接，哪怕改成了别的串（用户自己知道）
+                        break;
+                    }
+                }
+                st.data_dirty = true;
+            }
+            todo_rebuild_layout(st, app.render.client_logical());
+            ::InvalidateRect(app.panel, nullptr, FALSE);
+        },
+        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); });
+}
+
+void todo_context_menu(App& app, POINT screen_pt, POINT client_pt) {
+    AppState& s = app.state;
+    const D2D1_POINT_2F lpt = app.render.to_logical(client_pt);
+    const int hit = todo_hittest(app, lpt);
+    if (hit >= 0) s.todo.sel = hit;
+    const bool has = s.todo.sel >= 0 && s.todo.sel < static_cast<int>(s.todos.size());
+    const bool is_image =
+        has && s.todos[static_cast<size_t>(s.todo.sel)].kind == TodoKind::Image;
+
+    HMENU menu = ::CreatePopupMenu();
+    ::AppendMenuW(menu, MF_STRING | (has ? MF_ENABLED : MF_GRAYED), 1, L"打开(&O)");
+    ::AppendMenuW(menu, MF_STRING | (has ? MF_ENABLED : MF_GRAYED), 2, L"复制(&C)");
+    ::AppendMenuW(menu, MF_STRING | (has ? MF_ENABLED : MF_GRAYED), 3, L"编辑(&E)");
+    ::AppendMenuW(menu, MF_STRING | (has ? MF_ENABLED : MF_GRAYED), 4,
+                  L"切换完成(&T)");
+    ::AppendMenuW(menu, MF_STRING | (has ? MF_ENABLED : MF_GRAYED), 5, L"删除(&D)");
+    ::AppendMenuW(menu, MF_STRING | (is_image ? MF_ENABLED : MF_GRAYED), 6,
+                  L"在资源管理器中显示(&R)");
+    ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    ::AppendMenuW(menu, MF_STRING, 7, L"粘贴(&V)");
+    ::AppendMenuW(menu, MF_STRING, 8, L"清空已完成(&X)");
+
+    const UINT cmd = ::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen_pt.x,
+                                      screen_pt.y, 0, app.panel, nullptr);
+    ::DestroyMenu(menu);
+
+    switch (cmd) {
+        case 1:
+            todo_open_selected(app);
+            break;
+        case 2:
+            todo_copy_selected(app);
+            break;
+        case 3:
+            todo_rename_selected(app);
+            break;
+        case 4:
+            todo_toggle_done(app);
+            break;
+        case 5:
+            todo_delete_selected(app);
+            break;
+        case 6:
+            todo_reveal_selected(app);
+            break;
+        case 7:
+            todo_add_from_clipboard(app);
+            break;
+        case 8:
+            todo_clear_done(app);
+            break;
+        default:
+            break;
+    }
+    ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
 }  // namespace sg

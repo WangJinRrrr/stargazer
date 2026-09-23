@@ -528,7 +528,12 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             if (app->state.view == View::Todo) {
                 const int row = todo_hittest(*app, lpt);
-                app->state.todo.sel = row;  // 点空白处 = 取消选中（复选框/双击在 Task 5）
+                if (row >= 0 && todo_checkbox_hit_in_row(*app, row, lpt)) {
+                    app->state.todo.sel = row;
+                    todo_toggle_done(*app);   // 点复选框 = 切换完成态
+                    return 0;
+                }
+                app->state.todo.sel = row;  // 点空白处 = 取消选中
                 if (row >= 0) ::SetFocus(hwnd);
                 ::InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
@@ -609,6 +614,14 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!app) return 0;
             const D2D1_POINT_2F lpt =
                 app->render.to_logical(POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
+            if (app->state.view == View::Todo) {
+                const int hit = todo_hittest(*app, lpt);
+                if (hit >= 0) {
+                    app->state.todo.sel = hit;
+                    todo_open_selected(*app);  // 链接进浏览器，图片用系统看图
+                }
+                return 0;
+            }
             if (app->state.view == View::Browse) {
                 const int row = browse_row_hittest(app->state, app->render.client_logical(), lpt);
                 if (row >= 0) {
@@ -645,6 +658,8 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 box_context_menu(*app, pt, client);
             } else if (app->state.view == View::Browse) {
                 browse_context_menu(*app, pt, client);
+            } else if (app->state.view == View::Todo) {
+                todo_context_menu(*app, pt, client);
             }
             return 0;
         }
@@ -779,6 +794,10 @@ void app_save_if_dirty(App& app) {
         ::MessageBoxW(app.ctl, L"保存失败：程序目录可能已变为不可写。", L"Stargazer",
                       MB_ICONWARNING);
     }
+}
+
+void app_notify(App& app, const std::wstring& text) {
+    tray_balloon(app, L"Stargazer", text);
 }
 
 void app_save_ui(App& app) {
