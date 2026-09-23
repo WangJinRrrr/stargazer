@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(stargazer CXX)
+project(stargazer CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,8 +55,11 @@ set(SG_SOURCES
   src/dragdrop.cpp
 )
 
-add_executable(stargazer WIN32 ${SG_SOURCES} ${MODEL_SOURCES})
-target_include_directories(stargazer PRIVATE src)
+add_executable(stargazer WIN32 ${SG_SOURCES} ${MODEL_SOURCES} resources/stargazer.rc)
+target_include_directories(stargazer PRIVATE src resources)
 target_compile_options(stargazer PRIVATE /O2)
+# 应用清单（comctl32 v6 + PerMonitorV2 + Win10 supportedOS）全部写在 resources/stargazer.manifest，
+# 由 stargazer.rc 当一个 RT_MANIFEST 资源带进去；这里关掉链接器自己那份，免得两份打架。
+target_link_options(stargazer PRIVATE "/MANIFEST:NO")
 target_link_libraries(stargazer PRIVATE
   d2d1 dwrite shell32 ole32 shlwapi comctl32 dwmapi user32 gdi32 windowscodecs uxtheme)

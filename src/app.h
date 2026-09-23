@@ -52,6 +52,8 @@ struct App {
     UINT hotkey_key = kDefaultHotkeyKey;
     // 模态小窗（设置热键）开着时为 true：期间忽略全局热键，也不开第二个模态窗
     bool modal = false;
+    // 自己加载的托盘小图标（退出时 DestroyIcon）；用系统图标时保持 nullptr
+    HICON tray_icon = nullptr;
     // 外部拖拽在窗口上悬停时为 true（抑制悬停高亮更新，不用于隐藏）
     bool in_drag = false;
     bool running = true;

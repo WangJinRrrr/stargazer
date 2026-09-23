@@ -1,0 +1,39 @@
+#pragma code_page(65001)
+#include <windows.h>
+#include "resource.h"
+
+// 应用图标：多尺寸（16/24/32/48/64 用经典 BMP，128/256 用 PNG 压缩）
+IDI_APPICON ICON "stargazer.ico"
+
+// 应用清单也放这里。配合链接选项 /MANIFEST:NO：
+// 清单完全由 stargazer.manifest 决定，不让链接器再生成一份来打架。
+1 RT_MANIFEST "stargazer.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"  // 简体中文，Unicode
+        BEGIN
+            VALUE "CompanyName", "WangJinRan"
+            VALUE "FileDescription", "Stargazer 桌面效率工具"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "stargazer"
+            VALUE "LegalCopyright", "Copyright (C) 2026 WangJinRan (MIT License)"
+            VALUE "OriginalFilename", "stargazer.exe"
+            VALUE "ProductName", "Stargazer"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END

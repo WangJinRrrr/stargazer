@@ -12,6 +12,7 @@
 #include "fs_work.h"
 #include "images.h"
 #include "model/paths.h"
+#include "resource.h"  // IDI_APPICON
 #include "text_io.h"
 #include "views/box.h"
 #include "views/browse.h"
@@ -142,6 +143,12 @@ bool pick_folder(HWND owner, std::wstring& out) {
     return ok;
 }
 
+// 窗口类与托盘用的图标：从自己的资源里取，取不到就退回系统通用图标
+static HICON load_app_icon(HINSTANCE inst, int cx, int cy) {
+    return reinterpret_cast<HICON>(::LoadImageW(inst, MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON,
+                                                cx, cy, LR_DEFAULTCOLOR));
+}
+
 void add_tray_icon(App& app) {
     NOTIFYICONDATAW nid{};
     nid.cbSize = sizeof(nid);
@@ -149,7 +156,10 @@ void add_tray_icon(App& app) {
     nid.uID = kTrayId;
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_APP_TRAY;
-    nid.hIcon = ::LoadIconW(nullptr, IDI_APPLICATION);
+    nid.hIcon = load_app_icon(app.inst, ::GetSystemMetrics(SM_CXSMICON),
+                              ::GetSystemMetrics(SM_CYSMICON));
+    app.tray_icon = nid.hIcon;  // 自己加载的要自己 DestroyIcon（左下角退回系统图标时保留 nullptr）
+    if (!nid.hIcon) nid.hIcon = ::LoadIconW(nullptr, IDI_APPLICATION);
     wcscpy_s(nid.szTip, L"Stargazer — Ctrl+Shift+Space 呼出");
     ::Shell_NotifyIconW(NIM_ADD, &nid);
 }
@@ -435,6 +445,9 @@ void show_hotkey_dialog(App& app) {
         wc.lpfnWndProc = hotkey_dlg_proc;
         wc.hInstance = app.inst;
         wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = ::LoadIconW(app.inst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.hIconSm = load_app_icon(app.inst, ::GetSystemMetrics(SM_CXSMICON),
+                                   ::GetSystemMetrics(SM_CYSMICON));
         wc.hbrBackground = dlg_brush();
         wc.lpszClassName = kHotkeyDlgClass;
         if (!::RegisterClassExW(&wc)) return;
@@ -1320,6 +1333,9 @@ bool app_init(App& app, HINSTANCE inst) {
     wc.style = CS_DBLCLKS;  // 双击检测由系统完成，视图层不必自己计时
     wc.lpfnWndProc = ctl_wndproc;
     wc.hInstance = inst;
+    wc.hIcon = ::LoadIconW(inst, MAKEINTRESOURCEW(IDI_APPICON));
+    wc.hIconSm = load_app_icon(inst, ::GetSystemMetrics(SM_CXSMICON),
+                               ::GetSystemMetrics(SM_CYSMICON));
     wc.lpszClassName = kCtlClass;
     if (!::RegisterClassExW(&wc)) return false;
 
@@ -1357,6 +1373,10 @@ void app_shutdown(App& app) {
     if (app.ctl) {
         ::UnregisterHotKey(app.ctl, app.hotkey_id);
         remove_tray_icon(app);
+        if (app.tray_icon) {
+            ::DestroyIcon(app.tray_icon);
+            app.tray_icon = nullptr;
+        }
     }
 }
 
