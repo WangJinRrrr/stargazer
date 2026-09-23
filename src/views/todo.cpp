@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <ctime>
+#include <cwctype>
 
 #include "app.h"
 #include "clipboard.h"
@@ -13,6 +14,14 @@
 namespace sg {
 
 namespace {
+
+std::wstring trim(const std::wstring& s) {
+    size_t b = 0;
+    size_t e = s.size();
+    while (b < e && std::iswspace(static_cast<wint_t>(s[b])) != 0) ++b;
+    while (e > b && std::iswspace(static_cast<wint_t>(s[e - 1])) != 0) --e;
+    return s.substr(b, e - b);
+}
 
 // attach 是不是我们自己的副本，且删掉 except_id 这条之后就没别人在用了
 bool copy_is_orphan(const App& app, long long except_id, const std::wstring& attach) {
@@ -328,8 +337,22 @@ void todo_sync_input(App& app) {
             ::InvalidateRect(app.panel, nullptr, FALSE);
         },
         nullptr);
-    // ↑↓ 等导航键要从输入框转给列表（输入框自己会吃掉方向键）
+    // ↑↓ 等导航键要从输入框转给列表（输入框自己会吃掉方向键）；Ctrl+V 要看剪贴板里是什么
     t.input.on_key = [&app](UINT vk) {
+        if (vk == L'V' && (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) {
+            // 有文件或位图 → 自己接管（走待办流水线）；纯文本交回 EDIT（保留多行粘贴体验）
+            bool move = false;
+            const bool has_files = !clipboard_get_paths(move).empty();
+            std::wstring text;
+            const bool has_text = clipboard_get_text(text) && !trim(text).empty();
+            std::vector<uint8_t> dib;
+            const bool has_bitmap = !has_files && !has_text && clipboard_get_image_dib(dib);
+            if (has_files || has_bitmap) {
+                todo_add_from_clipboard(app);
+                return true;
+            }
+            return false;
+        }
         switch (vk) {
             case VK_UP:
             case VK_DOWN:
@@ -373,8 +396,7 @@ void todo_leave(App& app) {
 
 void todo_add_text(App& app, const std::wstring& text) {
     // Task 4 就需要它：底部输入框的回车要能真的记一条（剪贴板/拖入/图片在 Task 6）
-    AppState& s = app.state;
-    if (text.empty()) return;
+    AppState& s = app.state;    if (text.empty()) return;
     TodoItem item;
     item.id = next_todo_id(s.todos);
     item.created = static_cast<long long>(::time(nullptr));
@@ -389,21 +411,114 @@ void todo_add_text(App& app, const std::wstring& text) {
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
-// Task 6 实现；先给空实现，让 Task 4 能链接
+// Task 6：真正的输入流水线
 bool todo_add_from_clipboard(App& app) {
-    (void)app;
-    return false;
+    // 1) 文件（CF_HDROP）：逐个看，是图片的各记一条引用
+    bool move = false;
+    const std::vector<std::wstring> paths = clipboard_get_paths(move);
+    if (!paths.empty()) {
+        int added = 0;
+        for (const auto& p : paths) {
+            if (is_image_path(p)) {
+                todo_add_image_ref(app, p);
+                ++added;
+            }
+        }
+        if (added == 0) {
+            app_notify(app, L"待办只收文字、链接和图片");
+            return false;
+        }
+        ::InvalidateRect(app.panel, nullptr, FALSE);
+        return true;
+    }
+    // 2) 文本优先于位图：Excel/Word 复制时剪贴板里同时有文本和位图，
+    //    按“位图优先”会把一个单元格变成一张图（Review Focus 2）
+    std::wstring text;
+    if (clipboard_get_text(text) && !trim(text).empty()) {
+        todo_add_text(app, text);
+        return true;
+    }
+    // 3) 位图（截图）：落盘成 data\images\<id>.png
+    std::vector<uint8_t> dib;
+    if (clipboard_get_image_dib(dib)) {
+        todo_add_clipboard_image(app, dib);
+        return true;
+    }
+    return false;  // 剪贴板什么都没有：不提示（Ctrl+V 粘空剪贴板是常见误操作）
 }
 
 bool todo_add_from_paths(App& app, const std::vector<std::wstring>& paths) {
-    (void)app;
-    (void)paths;
-    return false;
+    int added = 0;
+    for (const auto& p : paths) {
+        if (is_image_path(p)) {
+            todo_add_image_ref(app, p);
+            ++added;
+        }
+    }
+    if (added == 0) {
+        app_notify(app, L"待办只收文字、链接和图片");
+        return false;
+    }
+    ::InvalidateRect(app.panel, nullptr, FALSE);
+    return true;
+}
+
+void todo_add_image_ref(App& app, const std::wstring& path) {
+    AppState& s = app.state;
+    TodoItem item;
+    item.id = next_todo_id(s.todos);
+    item.created = static_cast<long long>(::time(nullptr));
+    item.kind = TodoKind::Image;
+    item.attach = path;  // 引用：不复制内容
+    s.todos.push_back(std::move(item));
+    after_change(app);
+    s.todo.sel = 0;
+    s.todo.scroll = 0.f;
+    todo_rebuild_layout(s, app.render.client_logical());
+}
+
+void todo_add_clipboard_image(App& app, const std::vector<uint8_t>& dib) {
+    AppState& s = app.state;
+    TodoItem item;
+    item.id = next_todo_id(s.todos);
+    item.created = static_cast<long long>(::time(nullptr));
+    item.kind = TodoKind::Image;
+    const std::wstring images = join_path(app.paths.data_dir, L"images");
+    item.attach = join_path(images, std::to_wstring(item.id) + L".png");
+    // 先插条目、再落盘：失败时 todo_on_image_saved 会把它撤掉并提示。
+    // （顺序反过来会多一个“已落盘但还在编码中”的中间态，反而更难处理）
+    const std::wstring attach = item.attach;
+    const long long id = item.id;
+    s.todos.push_back(std::move(item));
+    after_change(app);
+    s.todo.sel = 0;
+    s.todo.scroll = 0.f;
+    todo_rebuild_layout(s, app.render.client_logical());
+    s.todo.pending_image_id = id;
+    ++s.todo.op_id;
+    fs_save_image(dib, attach, s.todo.op_id);
 }
 
 void todo_on_image_saved(App& app, uint64_t request_id) {
-    (void)app;
-    (void)request_id;
+    AppState& s = app.state;
+    if (s.todo.pending_image_id == 0) return;
+    bool ok = true;
+    std::wstring error;
+    std::wstring note;
+    if (!fs_take_op(request_id, ok, error, note)) return;  // 不是我们的结果
+    const long long id = s.todo.pending_image_id;
+    s.todo.pending_image_id = 0;
+    if (!ok) {
+        // 回滚刚插入的那条：宁可没记上，也不要留一个永远显示“图片已不存在”的条目
+        s.todos.erase(std::remove_if(s.todos.begin(), s.todos.end(),
+                                     [id](const TodoItem& t) { return t.id == id; }),
+                      s.todos.end());
+        s.todo.sel = -1;
+        after_change(app);
+        app_notify(app, L"图片保存失败：" + error);
+        return;
+    }
+    ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
 void todo_toggle_done(App& app) {

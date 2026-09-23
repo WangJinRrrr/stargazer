@@ -215,12 +215,19 @@ bool ensure_panel(App& app) {
     }
     dragdrop_set_hook([&app](const std::vector<std::wstring>& paths) {
         AppState& s = app.state;
-        // 拖入只对收纳盒有意义（Todo / 浏览还没实现，不静默改数据）
-        if (s.view != View::Box) return;
-        // 进当前盒子。不去重：同一文件在多个盒子里、或同盒重复都存在合法用法
-        if (box_add_paths(s.boxes, s.box_view.box, paths) > 0) s.data_dirty = true;
-        box_clamp(s, app.render.client_logical());
-        ::InvalidateRect(app.panel, nullptr, FALSE);
+        if (s.view == View::Box) {
+            // 进当前盒子。不去重：同一文件在多个盒子里、或同盒重复都存在合法用法
+            if (box_add_paths(s.boxes, s.box_view.box, paths) > 0) s.data_dirty = true;
+            box_clamp(s, app.render.client_logical());
+            ::InvalidateRect(app.panel, nullptr, FALSE);
+            return;
+        }
+        if (s.view == View::Todo) {
+            // 图片文件记成引用型条目；非图片会托着气泡提示，不静默吞掉
+            todo_add_from_paths(app, paths);
+            return;
+        }
+        // 浏览视图：拖入暂不支持（粘贴请用 Ctrl+V）
     });
     return true;
 }
@@ -299,7 +306,10 @@ LRESULT CALLBACK ctl_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app && app->panel) browse_on_dir_loaded(*app);
             return 0;
         case WM_APP_FS_OP_DONE:
-            if (app && app->panel) browse_on_op_done(*app);
+            if (app && app->panel) {
+                browse_on_op_done(*app);
+                todo_on_image_saved(*app, app->state.todo.op_id);
+            }
             return 0;
         case WM_CLOSE:
             ::DestroyWindow(hwnd);

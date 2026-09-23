@@ -44,9 +44,14 @@ void todo_reveal_selected(App& app);
 void todo_context_menu(App& app, POINT screen_pt, POINT client_pt);
 
 // --- 输入流水线（Task 6 起）---
+// Task 6 的输入流水线（实现见下方）
 bool todo_add_from_clipboard(App& app);
 bool todo_add_from_paths(App& app, const std::vector<std::wstring>& paths);
 void todo_add_text(App& app, const std::wstring& text);
 void todo_on_image_saved(App& app, uint64_t request_id);
+
+// 内部：记一条引用型图片 / 一条剪贴板位图（落盘后才能看到）
+void todo_add_image_ref(App& app, const std::wstring& path);
+void todo_add_clipboard_image(App& app, const std::vector<uint8_t>& dib);
 
 }  // namespace sg

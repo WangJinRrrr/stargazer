@@ -12,19 +12,21 @@
 #include "app.h"  // WM_APP_FS_CHECKED / WM_APP_DIR_LOADED / WM_APP_FS_OP_DONE
 #include "model/dirlist.h"
 #include "model/paths.h"
+#include "png.h"
 
 namespace sg {
 namespace {
 
-enum class Kind { Exists, ListDir, Rename, Mkdir, Delete, Paste };
+enum class Kind { Exists, ListDir, Rename, Mkdir, Delete, Paste, SaveImage };
 
 struct Request {
     Kind kind = Kind::Exists;
     uint64_t id = 0;
-    std::wstring path;           // Exists / ListDir / Mkdir / Delete；Rename 的 from
-    std::wstring path2;          // Rename 的 to；Paste 的 dest_dir
+    std::wstring path;  // Exists/ListDir/Mkdir/Delete；Rename 的 from；SaveImage 的目标
+    std::wstring path2;  // Rename 的 to；Paste 的 dest_dir
     std::vector<std::wstring> many;  // Paste 的源
-    bool flag = false;           // Delete: 回收站?；Paste: move?
+    std::vector<uint8_t> dib;        // SaveImage 的 DIB 字节
+    bool flag = false;               // Delete: 回收站?；Paste: move?
 };
 
 struct ExistsResult {
@@ -179,6 +181,12 @@ void do_op(const Request& req, OpResult& res) {
                 res.ok = run_shell_op(flags, req.flag ? FO_MOVE : FO_COPY, todo, dest, res.error);
             }
             if (skipped > 0) res.note = L"跳过 " + std::to_wstring(skipped) + L" 个同名文件";
+            break;
+        }
+        case Kind::SaveImage: {
+            // 目录可能被用户手删过：先建出来再写
+            ::CreateDirectoryW(parent_path(req.path).c_str(), nullptr);
+            res.ok = png_encode_dib(req.path, req.dib, res.error);
             break;
         }
         default:
@@ -373,6 +381,21 @@ void fs_paste(const std::vector<std::wstring>& srcs, const std::wstring& dest_di
     r.many = srcs;
     r.path2 = dest_dir;
     r.flag = move;
+    r.id = request_id;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        if (!g_worker.joinable()) return;
+        g_queue.push_back(std::move(r));
+    }
+    g_cv.notify_one();
+}
+
+void fs_save_image(const std::vector<uint8_t>& dib, const std::wstring& dest_path,
+                   uint64_t request_id) {
+    Request r;
+    r.kind = Kind::SaveImage;
+    r.dib = dib;
+    r.path = dest_path;
     r.id = request_id;
     {
         std::lock_guard<std::mutex> lk(g_mu);

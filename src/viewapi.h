@@ -56,6 +56,7 @@ struct TodoState {
     InlineEdit input;                   // 底部常驻输入框（新增条目）
     InlineEdit edit;                    // F2 改文字（临时叠在行上）
     long long pending_image_id = 0;     // 正在落盘的图片条目 id（0 = 无），失败时回滚它
+    uint64_t op_id = 0;                 // 文件操作请求号（与 fs_take_op 配对）
 };
 
 struct AppState {
