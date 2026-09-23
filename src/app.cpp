@@ -172,6 +172,38 @@ bool ensure_panel(App& app) {
     return true;
 }
 
+// 切换顶层视图。搜索框是所有视图共用的同一个 InlineEdit，切走前先关掉，
+// 否则它会带着 launcher 的回调去接收新视图的输入。
+static void app_set_view(App& app, View v) {
+    if (app.panel == nullptr || v == app.state.view) return;
+    AppState& s = app.state;
+    s.launcher.search.close();
+    s.view = v;
+    if (v == View::Launcher) {
+        s.launcher.sel = -1;
+        s.launcher.scroll = 0;
+        launcher_refilter(s);
+        launcher_sync_search(s, app.panel, app.render.client_logical(), app.render);
+        s.launcher.search.focus();
+    }
+    ::InvalidateRect(app.panel, nullptr, FALSE);
+}
+
+// Ctrl+1..4 / Ctrl+Tab。返回 true = 已被消费。
+// 面板与搜索框（子 EDIT 吃掉按键）两处都要调，否则输入框在焦点上时热键失灵。
+static bool app_view_hotkey(App& app, UINT vk) {
+    if ((::GetKeyState(VK_CONTROL) & 0x8000) == 0) return false;
+    if (vk == VK_TAB) {
+        app_set_view(app, static_cast<View>((static_cast<int>(app.state.view) + 1) % kViewCount));
+        return true;
+    }
+    if (vk >= '1' && vk <= '4') {
+        app_set_view(app, static_cast<View>(vk - '1'));
+        return true;
+    }
+    return false;
+}
+
 LRESULT CALLBACK ctl_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     App* app = reinterpret_cast<App*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
@@ -242,6 +274,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_MOUSEWHEEL: {
             if (!app) return 0;
+            if (app->state.view != View::Launcher) return 0;
             const int delta = GET_WHEEL_DELTA_WPARAM(wp);
             LauncherState& ls = app->state.launcher;
             ls.scroll = std::max(0, ls.scroll - (delta > 0 ? 1 : -1));
@@ -261,7 +294,22 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ::BeginPaint(hwnd, &ps);
             if (app && app->render.begin()) {
                 app->render.clear(app->render.theme.bg);
-                launcher_render(app->render, app->state, app->render.client_logical());
+                const D2D1_SIZE_F cs = app->render.client_logical();
+                view_tabs_render(app->render, cs, static_cast<int>(app->state.view));
+                switch (app->state.view) {
+                    case View::Launcher:
+                        launcher_render(app->render, app->state, cs);
+                        break;
+                    default:
+                        // Task 3 起换成真正的视图；这一行只用来证明切换真的生效
+                        app->render.text(
+                            D2D1::RectF(kPad, kViewTabsH + kPad * 2.f, cs.width - kPad,
+                                        kViewTabsH + kPad * 2.f + 40.f),
+                            std::wstring(view_name(static_cast<int>(app->state.view))) +
+                                L"：尚未实现",
+                            app->render.format(13.f), app->render.theme.text_dim);
+                        break;
+                }
                 app->render.end();
             }
             ::EndPaint(hwnd, &ps);
@@ -275,6 +323,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_MOUSEMOVE: {
             if (!app) return 0;
+            if (app->state.view != View::Launcher) return 0;
             const POINT phys{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             const D2D1_POINT_2F lpt = app->render.to_logical(phys);
             const D2D1_SIZE_F cs = app->render.client_logical();
@@ -314,6 +363,14 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const POINT phys{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             const D2D1_POINT_2F lpt = app->render.to_logical(phys);
             const D2D1_SIZE_F cs = app->render.client_logical();
+
+            // 视图标签行在最顶部，比分组标签更先命中
+            const int vt = view_tab_hittest(cs, lpt);
+            if (vt >= 0) {
+                app_set_view(*app, static_cast<View>(vt));
+                return 0;
+            }
+            if (app->state.view != View::Launcher) return 0;
 
             const int tab = launcher_tab_hittest(app->state, cs, lpt);
             if (tab >= 0) {
@@ -361,6 +418,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_LBUTTONDBLCLK: {
             // 双击启动（CS_DBLCLKS 已开启，系统保证只有快速双击才发这条消息）
             if (!app) return 0;
+            if (app->state.view != View::Launcher) return 0;
             const D2D1_POINT_2F lpt =
                 app->render.to_logical(POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
             const int hit =
@@ -383,6 +441,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_CONTEXTMENU: {
             if (!app) return 0;
+            if (app->state.view != View::Launcher) return 0;
             POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             if (pt.x == -1 && pt.y == -1) {  // 键盘唤出菜单
                 RECT rc{};
@@ -398,6 +457,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_CHAR: {
             // 在网格里打字应当回到搜索框继续过滤，否则用户会以为搜索坏了
             if (!app) return 0;
+            if (app->state.view != View::Launcher) return 0;
             const wchar_t ch = static_cast<wchar_t>(wp);
             LauncherState& ls = app->state.launcher;
             if (ch >= 0x20 && ch != 0x7F && ls.search.is_open()) {
@@ -413,6 +473,8 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 app_hide(*app);
                 return 0;
             }
+            if (app_view_hotkey(*app, static_cast<UINT>(wp))) return 0;
+            if (app->state.view != View::Launcher) return 0;
             if (wp == VK_RETURN) {
                 if (app->state.launcher.sel >= 0) launch_selected(*app);
                 return 0;
@@ -498,6 +560,12 @@ void app_load(App& app) {
             s.ui_w = _wtoi(w.c_str());
             s.ui_h = _wtoi(h.c_str());
         }
+        // 上次的视图（0 基，与 View 枚举一致）。手改越界时夹紧
+        const std::wstring vw = config_get(ui, L"view", L"");
+        if (!vw.empty()) {
+            const int vi = std::clamp(_wtoi(vw.c_str()), 0, kViewCount - 1);
+            s.view = static_cast<View>(vi);
+        }
     }
     launcher_refilter(s);
 
@@ -547,6 +615,7 @@ void app_save_ui(App& app) {
                                   static_cast<int>(app.state.groups.size()) - 1);
         config_set(ui, L"group", app.state.groups[gi].name);
     }
+    config_set(ui, L"view", std::to_wstring(static_cast<int>(app.state.view)));
     save_text(app.paths, L"ui.txt", serialize_config(ui));
 }
 
@@ -578,8 +647,11 @@ void app_show(App& app) {
     s.launcher.sel = -1;
     s.launcher.scroll = 0;
     launcher_refilter(s);
-    launcher_sync_search(s, app.panel, app.render.client_logical(), app.render);
-    s.launcher.search.focus();
+    // 搜索框属于启动板：切到别的视图时不能把它的回调挂上去（Task 3 起 Box 自己管焦点）
+    if (s.view == View::Launcher) {
+        launcher_sync_search(s, app.panel, app.render.client_logical(), app.render);
+        s.launcher.search.focus();
+    }
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 

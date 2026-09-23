@@ -54,4 +54,14 @@ void grid_render(Renderer& r, const GridLayout& gl, const std::vector<GridItem>&
 // 按扩展名给占位块配色（同一扩展名总是同一颜色且重启不变）
 D2D1_COLOR_F ext_color(const std::wstring& path);
 
+// --- 顶层视图标签行（启动板 / 收纳盒 / 待办 / 浏览）---
+constexpr float kViewTabsH = 28.f;
+constexpr int kViewCount = 4;
+
+D2D1_RECT_F view_tabs_rect(D2D1_SIZE_F client);
+// 返回视图下标（0..3），未命中 -1
+int view_tab_hittest(D2D1_SIZE_F client, D2D1_POINT_2F pt);
+void view_tabs_render(Renderer& r, D2D1_SIZE_F client, int active);
+const wchar_t* view_name(int v);
+
 }  // namespace sg

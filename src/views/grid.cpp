@@ -154,4 +154,54 @@ void grid_render(Renderer& r, const GridLayout& gl, const std::vector<GridItem>&
     }
 }
 
+// 四个视图等宽分段。标签行贴窗口最顶部（y 0..kViewTabsH）
+static float view_tab_width(D2D1_SIZE_F client) {
+    return (client.width - kPad * 2.f) / static_cast<float>(kViewCount);
+}
+
+D2D1_RECT_F view_tabs_rect(D2D1_SIZE_F client) {
+    return D2D1::RectF(kPad, 0.f, client.width - kPad, kViewTabsH);
+}
+
+int view_tab_hittest(D2D1_SIZE_F client, D2D1_POINT_2F pt) {
+    const D2D1_RECT_F tr = view_tabs_rect(client);
+    if (pt.y < tr.top || pt.y > tr.bottom) return -1;
+    const float w = view_tab_width(client);
+    if (w <= 0.f || pt.x < tr.left || pt.x >= tr.left + w * kViewCount) return -1;
+    return static_cast<int>((pt.x - tr.left) / w);
+}
+
+const wchar_t* view_name(int v) {
+    switch (v) {
+        case 0:
+            return L"启动板";
+        case 1:
+            return L"收纳盒";
+        case 2:
+            return L"待办";
+        case 3:
+            return L"浏览";
+        default:
+            return L"";
+    }
+}
+
+void view_tabs_render(Renderer& r, D2D1_SIZE_F client, int active) {
+    const D2D1_RECT_F tr = view_tabs_rect(client);
+    const float w = view_tab_width(client);
+    IDWriteTextFormat* fmt =
+        r.format(12.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
+    for (int i = 0; i < kViewCount; ++i) {
+        const D2D1_RECT_F tab = D2D1::RectF(tr.left + i * w + 2.f, tr.top + 2.f,
+                                           tr.left + (i + 1) * w - 2.f, tr.bottom - 2.f);
+        if (i == active) {
+            r.fill_round_rect(tab, 6.f, r.theme.accent);
+            r.text(tab, view_name(i), fmt, D2D1::ColorF(1.f, 1.f, 1.f));
+        } else {
+            r.fill_round_rect(tab, 6.f, r.theme.card);
+            r.text(tab, view_name(i), fmt, r.theme.text_dim);
+        }
+    }
+}
+
 }  // namespace sg

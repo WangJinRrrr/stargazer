@@ -8,19 +8,22 @@
 
 namespace sg {
 
-// 启动板网格的纵向起点：分组标签行 + 搜索框 + 内边距（逻辑 DIP）
-static float launcher_grid_top() { return kPad + kTabsH + kSearchH + kPad; }
+// 启动板网格的纵向起点：视图标签行 + 分组标签行 + 搜索框 + 内边距（逻辑 DIP）
+static float launcher_grid_top() {
+    return kViewTabsH + kPad + kTabsH + kSearchH + kPad;
+}
 
 static GridLayout launcher_grid(D2D1_SIZE_F client) {
     return grid_measure(client.width, client.height, launcher_grid_top());
 }
 
 D2D1_RECT_F launcher_tabs_rect(D2D1_SIZE_F client) {
-    return D2D1::RectF(kPad, kPad, client.width - kPad, kPad + kTabsH);
+    return D2D1::RectF(kPad, kViewTabsH + kPad, client.width - kPad, kViewTabsH + kPad + kTabsH);
 }
 
 D2D1_RECT_F launcher_search_rect(D2D1_SIZE_F client) {
-    return D2D1::RectF(kPad, kPad + kTabsH, client.width - kPad, kPad + kTabsH + kSearchH);
+    return D2D1::RectF(kPad, kViewTabsH + kPad + kTabsH, client.width - kPad,
+                       kViewTabsH + kPad + kTabsH + kSearchH);
 }
 
 static float tab_width(const std::wstring& name) {
@@ -158,14 +161,24 @@ void launcher_sync_search(AppState& s, HWND parent, D2D1_SIZE_F client, Renderer
             });
         // ↓ 从搜索框进网格：输入框自己会吃掉方向键，所以要在这里截住
         ls.search.on_key = [&s](UINT vk) {
-            if (vk != VK_DOWN) return false;
-            s.launcher.sel = s.launcher.filtered.empty() ? -1 : 0;
-            HWND parent = s.launcher.search.parent;
-            if (parent) {
-                ::SetFocus(parent);
-                ::InvalidateRect(parent, nullptr, FALSE);
+            if (vk == VK_DOWN) {
+                s.launcher.sel = s.launcher.filtered.empty() ? -1 : 0;
+                HWND parent = s.launcher.search.parent;
+                if (parent) {
+                    ::SetFocus(parent);
+                    ::InvalidateRect(parent, nullptr, FALSE);
+                }
+                return true;
             }
-            return true;
+            // Ctrl+1..4 / Ctrl+Tab 是全局视图切换，但按键落在子 EDIT 上、到不了面板，
+            // 所以在这里转投给父窗口（面板的 WM_KEYDOWN 里统一处理）。
+            if ((::GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
+                (vk == VK_TAB || (vk >= '1' && vk <= '4'))) {
+                HWND parent = s.launcher.search.parent;
+                if (parent) ::PostMessageW(parent, WM_KEYDOWN, vk, 0);
+                return true;
+            }
+            return false;
         };
         // 搜索框在失焦时要留着：网格抢焦点不能让它和已输入的内容一起消失
         ls.search.keep_open_on_blur = true;
