@@ -8,7 +8,6 @@
 #include "persist.h"
 #include "render.h"
 #include "viewapi.h"
-#include "views/launcher.h"
 
 namespace sg {
 
@@ -46,7 +45,7 @@ struct App {
 };
 
 bool app_init(App& app, HINSTANCE inst);
-// 读 launcher.txt / config.txt / ui.txt 到 AppState
+// 读 boxes.txt / config.txt / ui.txt 到 AppState
 void app_load(App& app);
 // data_dirty 时落盘并清标志
 void app_save_if_dirty(App& app);

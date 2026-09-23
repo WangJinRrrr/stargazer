@@ -234,7 +234,7 @@ void box_rename_selected(App& app) {
     const RECT rc = app.render.to_physical(input);
     const int box = s.box_view.box;
     const std::wstring current = items[sel].name;
-    s.launcher.search.open(
+    s.box_view.edit.open(
         app.panel, rc, current, app.render.dpi,
         [&app, box, sel](const std::wstring& t) {
             AppState& st = app.state;
@@ -274,7 +274,7 @@ void box_rename_box(App& app, int index) {
     const D2D1_RECT_F tr = box_tab_rect(s, app.render.client_logical(), index);
     const RECT rc = app.render.to_physical(tr);
     const std::wstring current = s.boxes[index].name;
-    s.launcher.search.open(
+    s.box_view.edit.open(
         app.panel, rc, current, app.render.dpi,
         [&app, index](const std::wstring& t) {
             AppState& st = app.state;

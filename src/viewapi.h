@@ -11,20 +11,8 @@
 
 namespace sg {
 
-enum class View { Launcher, Box, Todo, Explorer };
-
-// 启动板视图状态（只属于启动板，不污染全局）
-struct LauncherState {
-    int group = 0;
-    int sel = -1;  // filtered 中的下标；-1 = 焦点在搜索框
-    int hover = -1;
-    int scroll = 0;          // 起始行
-    int drag_over_tab = -1;  // 内部拖拽时高亮的目标分组标签
-    std::wstring query;
-    std::vector<int> filtered;  // 当前分组里通过过滤的条目下标
-    // 搜索框、重命名框、新建输入框共用同一个 EDIT 实例（同一时刻只会存在一个）
-    InlineEdit search;
-};
+// 视图集合。启动板已删除：它的位置由“浏览”（找文件）与“收纳盒”（归档）合起来取代。
+enum class View { Box, Todo, Browse };
 
 // 文件收纳盒视图状态（只属于盒子，不污染全局）
 struct BoxState {
@@ -33,16 +21,17 @@ struct BoxState {
     int hover = -1;
     int scroll = 0;         // 起始行
     int drag_over_tab = -1;  // 内部拖拽时高亮的目标盒子标签
+    // 重命名输入框。原来借用启动板的搜索框（全程序只有一个 EDIT 实例），
+    // 启动板删掉后盒子自己持有一个。
+    InlineEdit edit;
 };
 
 struct AppState {
-    std::vector<LaunchGroup> groups;
     std::vector<Box> boxes;
     std::vector<TodoItem> todos;
     Config config;
     int bad_lines = 0;
-    View view = View::Launcher;
-    LauncherState launcher;
+    View view = View::Box;  // 首次启动（ui.txt 还没有记录时）停在收纳盒
     BoxState box_view;
     bool data_dirty = false;
     // ui.txt 里想要的窗口尺寸（逻辑像素）。0 = 用默认值。

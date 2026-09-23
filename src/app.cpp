@@ -9,7 +9,6 @@
 #include "icons.h"
 #include "dragdrop.h"
 #include "fs_work.h"
-#include "launch.h"
 #include "model/paths.h"
 #include "text_io.h"
 #include "views/box.h"
@@ -18,8 +17,6 @@ namespace sg {
 
 const wchar_t* kCtlClass = L"StargazerCtl";
 const wchar_t* kPanelClass = L"StargazerWnd";
-
-static void launch_selected(App& app);  // 定义在下方，先声明（双击与 Enter 都要用）
 
 namespace {
 
@@ -168,39 +165,22 @@ bool ensure_panel(App& app) {
     }
     dragdrop_set_hook([&app](const std::vector<std::wstring>& paths) {
         AppState& s = app.state;
-        if (s.view == View::Box) {
-            // 拖入进当前盒子。不去重：同一文件在多个盒子里、或同盒重复都存在合法用法
-            if (box_add_paths(s.boxes, s.box_view.box, paths) > 0) s.data_dirty = true;
-            box_clamp(s, app.render.client_logical());
-        } else if (s.view == View::Launcher) {
-            if (s.groups.empty()) s.groups.push_back(LaunchGroup{ L"常用", {} });
-            const int gi =
-                std::clamp(s.launcher.group, 0, static_cast<int>(s.groups.size()) - 1);
-            for (const auto& p : paths) s.groups[gi].items.push_back(item_from_path(p));
-            s.data_dirty = true;
-            launcher_refilter(s);
-        } else {
-            return;  // Todo / Explorer 还没实现，先不动数据
-        }
+        // 拖入只对收纳盒有意义（Todo / 浏览还没实现，不静默改数据）
+        if (s.view != View::Box) return;
+        // 进当前盒子。不去重：同一文件在多个盒子里、或同盒重复都存在合法用法
+        if (box_add_paths(s.boxes, s.box_view.box, paths) > 0) s.data_dirty = true;
+        box_clamp(s, app.render.client_logical());
         ::InvalidateRect(app.panel, nullptr, FALSE);
     });
     return true;
 }
 
-// 切换顶层视图。搜索框是所有视图共用的同一个 InlineEdit，切走前先关掉，
-// 否则它会带着 launcher 的回调去接收新视图的输入。
+// 切换顶层视图。盒子重命名框是所有视图共用的同一个 InlineEdit，切走前先关掉。
 static void app_set_view(App& app, View v) {
     if (app.panel == nullptr || v == app.state.view) return;
     AppState& s = app.state;
-    s.launcher.search.close();
+    s.box_view.edit.close();
     s.view = v;
-    if (v == View::Launcher) {
-        s.launcher.sel = -1;
-        s.launcher.scroll = 0;
-        launcher_refilter(s);
-        launcher_sync_search(s, app.panel, app.render.client_logical(), app.render);
-        s.launcher.search.focus();
-    }
     if (v == View::Box) {
         s.box_view.sel = -1;
         s.box_view.hover = -1;
@@ -212,8 +192,7 @@ static void app_set_view(App& app, View v) {
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
-// Ctrl+1..4 / Ctrl+Tab。返回 true = 已被消费。
-// 面板与搜索框（子 EDIT 吃掉按键）两处都要调，否则输入框在焦点上时热键失灵。
+// Ctrl+1..3 / Ctrl+Tab。返回 true = 已被消费。
 static bool app_view_hotkey(App& app, UINT vk) {
     // 用 GetAsyncKeyState 而不是 GetKeyState：后者是“队列同步态”，
     // 快速按下 Ctrl+数字（连击很快）时可能还没反映出来，热键会时灵时不灵。
@@ -222,7 +201,7 @@ static bool app_view_hotkey(App& app, UINT vk) {
         app_set_view(app, static_cast<View>((static_cast<int>(app.state.view) + 1) % kViewCount));
         return true;
     }
-    if (vk >= '1' && vk <= '4') {
+    if (vk >= '1' && vk <= '3') {
         app_set_view(app, static_cast<View>(vk - '1'));
         return true;
     }
@@ -310,8 +289,6 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app->state.view == View::Box) {
                 app->state.box_view.scroll = std::max(0, app->state.box_view.scroll + step);
                 box_clamp(app->state, app->render.client_logical());
-            } else if (app->state.view == View::Launcher) {
-                app->state.launcher.scroll = std::max(0, app->state.launcher.scroll + step);
             } else {
                 return 0;
             }
@@ -334,14 +311,11 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 const D2D1_SIZE_F cs = app->render.client_logical();
                 view_tabs_render(app->render, cs, static_cast<int>(app->state.view));
                 switch (app->state.view) {
-                    case View::Launcher:
-                        launcher_render(app->render, app->state, cs);
-                        break;
                     case View::Box:
                         box_render(*app);
                         break;
                     default:
-                        // Task 3 起换成真正的视图；这一行只用来证明切换真的生效
+                        // 待办 / 浏览还没实现；这一行只用来证明切换真的生效
                         app->render.text(
                             D2D1::RectF(kPad, kViewTabsH + kPad * 2.f, cs.width - kPad,
                                         kViewTabsH + kPad * 2.f + 40.f),
@@ -407,24 +381,10 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
 
-            int hit = -1;
-            int& hover = (app->state.view == View::Box) ? app->state.box_view.hover
-                                                        : app->state.launcher.hover;
-            if (app->state.view == View::Box) {
-                hit = box_hittest(*app, lpt);
-            } else if (app->state.view == View::Launcher) {
-                if (app->internal_drag) {
-                    const int over = launcher_tab_hittest(app->state, cs, lpt);
-                    if (over != app->state.launcher.drag_over_tab) {
-                        app->state.launcher.drag_over_tab = over;
-                        ::InvalidateRect(hwnd, nullptr, FALSE);
-                    }
-                    return 0;
-                }
-                hit = launcher_hittest(app->state, cs, lpt);
-            } else {
-                return 0;
-            }
+            if (app->state.view != View::Box) return 0;  // 目前只有收纳盒有网格
+
+            const int hit = box_hittest(*app, lpt);
+            int& hover = app->state.box_view.hover;
 
             if (hit != hover) {
                 hover = hit;
@@ -441,7 +401,6 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_MOUSELEAVE:
             if (app) {
                 app->mouse_tracking = false;
-                app->state.launcher.hover = -1;
                 app->state.box_view.hover = -1;
                 ::InvalidateRect(hwnd, nullptr, FALSE);
             }
@@ -452,25 +411,27 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const D2D1_POINT_2F lpt = app->render.to_logical(phys);
             const D2D1_SIZE_F cs = app->render.client_logical();
 
-            // 视图标签行在最顶部，比分组标签更先命中
+            // 视图标签行在最顶部，比盒子标签更先命中
             const int vt = view_tab_hittest(cs, lpt);
             if (vt >= 0) {
                 app_set_view(*app, static_cast<View>(vt));
                 return 0;
             }
-            if (app->state.view == View::Box) {
-                const int tab = box_tab_hittest(app->state, cs, lpt);
-                if (tab >= 0) {
-                    app->state.box_view.box = tab;
-                    app->state.box_view.sel = -1;
-                    app->state.box_view.scroll = 0;
-                    box_clamp(app->state, cs);
-                    // 换盒子必须重校验：否则上一个盒子的失效标记会留着，
-                    // 文件已经恢复的条目仍是灰色，一键清理会误删这条活引用（代码评审 Important 3）
-                    box_request_check(*app);
-                    ::InvalidateRect(hwnd, nullptr, FALSE);
-                    return 0;
-                }
+            if (app->state.view != View::Box) return 0;  // 其他视图还;没有鼠标交互
+
+            const int tab = box_tab_hittest(app->state, cs, lpt);
+            if (tab >= 0) {
+                app->state.box_view.box = tab;
+                app->state.box_view.sel = -1;
+                app->state.box_view.scroll = 0;
+                box_clamp(app->state, cs);
+                // 换盒子必须重校验：否则上一个盒子的失效标记会留着，
+                // 文件已经恢复的条目仍是灰色，一键清理会误删这条活引用（代码评审 Important 3）
+                box_request_check(*app);
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            {
                 const int hit = box_hittest(*app, lpt);
                 app->state.box_view.sel = hit;  // 点空白处 = 回到无选中态
                 if (hit >= 0) {
@@ -481,28 +442,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     ::SetCapture(hwnd);
                 }
                 ::InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
             }
-            if (app->state.view != View::Launcher) return 0;
-
-            const int tab = launcher_tab_hittest(app->state, cs, lpt);
-            if (tab >= 0) {
-                app->state.launcher.group = tab;
-                app->state.launcher.sel = -1;
-                app->state.launcher.scroll = 0;
-                launcher_refilter(app->state);
-                ::InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
-            }
-            const int hit = launcher_hittest(app->state, cs, lpt);
-            app->state.launcher.sel = hit;  // 点空白处 = 回到无选中态
-            if (hit >= 0) {
-                ::SetFocus(hwnd);
-                app->internal_drag = true;  // 先按下，拖到标签上松开才真换组
-                app->drag_from = hit;
-                ::SetCapture(hwnd);
-            }
-            ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         case WM_CAPTURECHANGED:
@@ -511,7 +451,6 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app && app->internal_drag) {
                 app->internal_drag = false;
                 app->drag_from = -1;
-                app->state.launcher.drag_over_tab = -1;
                 app->state.box_view.drag_over_tab = -1;
                 ::InvalidateRect(hwnd, nullptr, FALSE);
             }
@@ -529,49 +468,27 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         app->state.box_view.sel = -1;
                         box_clamp(app->state, app->render.client_logical());
                     }
-                } else if (app->state.launcher.drag_over_tab >= 0) {
-                    launcher_move_item_to_group(app->state, app->drag_from,
-                                                app->state.launcher.drag_over_tab);
                 }
-                app->state.launcher.drag_over_tab = -1;
                 app->state.box_view.drag_over_tab = -1;
                 app->drag_from = -1;
                 ::InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
         case WM_LBUTTONDBLCLK: {
-            // 双击启动/打开（CS_DBLCLKS 已开启，系统保证只有快速双击才发这条消息）
+            // 双击打开（CS_DBLCLKS 已开启，系统保证只有快速双击才发这条消息）
             if (!app) return 0;
+            if (app->state.view != View::Box) return 0;
             const D2D1_POINT_2F lpt =
                 app->render.to_logical(POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
-            if (app->state.view == View::Box) {
-                const int bhit = box_hittest(*app, lpt);
-                if (bhit >= 0) {
-                    app->state.box_view.sel = bhit;
-                    box_open_selected(*app);
-                }
-                return 0;
-            }
-            if (app->state.view != View::Launcher) return 0;
-            const int hit =
-                launcher_hittest(app->state, app->render.client_logical(), lpt);
-            if (hit >= 0) {
-                app->state.launcher.sel = hit;
-                launch_selected(*app);
+            const int bhit = box_hittest(*app, lpt);
+            if (bhit >= 0) {
+                app->state.box_view.sel = bhit;
+                box_open_selected(*app);
             }
             return 0;
         }
         case WM_COMMAND:
-            // 边打字边过滤：EDIT 每次内容变化都会给父窗口发 EN_CHANGE，
-            // 只连 Enter/失焦的提交是不够的（那样只在提交时才过滤）。
-            // 必须同时确认它此刻是“搜索框”角色：重命名框是同一个 EDIT 实例，
-            // 否则改名时打的字会写进搜索条件（代码评审 Important 4）。
-            if (app && HIWORD(wp) == EN_CHANGE && app->state.launcher.search.is_search &&
-                reinterpret_cast<HWND>(lp) == app->state.launcher.search.hwnd) {
-                app->state.launcher.query = app->state.launcher.search.text();
-                launcher_refilter(app->state);
-                ::InvalidateRect(hwnd, nullptr, FALSE);
-            }
+            // 启动板删掉后不再有“边打字边过滤”，WM_COMMAND 无需处理
             return 0;
         case WM_CONTEXTMENU: {
             if (!app) return 0;
@@ -587,21 +504,6 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // 菜单按当前视图分发（与启动板菜单同一入口）
             if (app->state.view == View::Box) {
                 box_context_menu(*app, pt, client);
-            } else if (app->state.view == View::Launcher) {
-                launcher_context_menu(*app, pt, client);
-            }
-            return 0;
-        }
-        case WM_CHAR: {
-            // 在网格里打字应当回到搜索框继续过滤，否则用户会以为搜索坏了
-            if (!app) return 0;
-            if (app->state.view != View::Launcher) return 0;
-            const wchar_t ch = static_cast<wchar_t>(wp);
-            LauncherState& ls = app->state.launcher;
-            if (ch >= 0x20 && ch != 0x7F && ls.search.is_open()) {
-                ls.sel = -1;
-                ls.search.focus();
-                ::PostMessageW(ls.search.hwnd, WM_CHAR, wp, lp);
             }
             return 0;
         }
@@ -614,31 +516,6 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app_view_hotkey(*app, static_cast<UINT>(wp))) return 0;
             if (app->state.view == View::Box) {
                 box_keydown(*app, static_cast<UINT>(wp));
-                return 0;
-            }
-            if (app->state.view != View::Launcher) return 0;
-            if (wp == VK_RETURN) {
-                if (app->state.launcher.sel >= 0) launch_selected(*app);
-                return 0;
-            }
-            if (wp == VK_F2) {
-                launcher_begin_rename(*app, app->render.client_logical());
-                return 0;
-            }
-            if (wp == VK_DELETE) {
-                launcher_delete_selected(app->state);
-                ::InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
-            }
-            const D2D1_SIZE_F cs = app->render.client_logical();
-            if (launcher_keydown(app->state, cs, static_cast<UINT>(wp))) {
-                if (app->state.launcher.sel < 0) {
-                    launcher_sync_search(app->state, hwnd, cs, app->render);
-                    app->state.launcher.search.focus();
-                } else {
-                    ::SetFocus(hwnd);
-                }
-                ::InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
         }
@@ -647,7 +524,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_DESTROY:
             if (app) {
-                app->state.launcher.search.close();
+                app->state.box_view.edit.close();
                 app->render.shutdown();
             }
             return 0;
@@ -663,23 +540,7 @@ void app_load(App& app) {
     AppState& s = app.state;
     std::wstring text;
 
-    // 读不出来但文件确实存在 => 编码不对（例如被存成了 ANSI）。
-    // 先备份成 .bad：否则用户改一次就把乱码写回去，永久损坏。
-    if (data_file_exists(app.paths, L"launcher.txt") &&
-        !load_text(app.paths, L"launcher.txt", text)) {
-        backup_bad(app.paths, L"launcher.txt");
-        ++s.bad_lines;
-    } else if (!text.empty()) {
-        int bad = 0;
-        s.groups = parse_launcher(text, bad);
-        s.bad_lines += bad;
-    }
-    if (s.groups.empty()) {
-        // 首次运行（或文件读坏了）给一个能直接用的分组，而不是空白界面
-        s.groups.push_back(LaunchGroup{ L"常用", {} });
-    }
-
-    // 收纳盒：与 launcher.txt 同一套（读不出来但存在 => 先备份 .bad）。
+    // 收纳盒：读不出来但文件存在 => 先备份 .bad（否则用户改一次就把乱码写回去）。
     // 用单独的字符串接内容：复用 text 会把上一份文件的内容当成盒子解析（真陷阱）。
     std::wstring boxes_text;
     if (data_file_exists(app.paths, L"boxes.txt") &&
@@ -701,14 +562,6 @@ void app_load(App& app) {
     if (load_text(app.paths, L"ui.txt", text)) {
         int bad = 0;
         const Config ui = parse_config(text, bad);
-        const std::wstring v = config_get(ui, L"group", L"");
-        // 只接受存在于当前数据里的分组名，防止手改后越界
-        for (size_t i = 0; i < s.groups.size(); ++i) {
-            if (s.groups[i].name == v) {
-                s.launcher.group = static_cast<int>(i);
-                break;
-            }
-        }
         const std::wstring w = config_get(ui, L"w", L"");
         const std::wstring h = config_get(ui, L"h", L"");
         if (!w.empty() && !h.empty()) {
@@ -734,7 +587,6 @@ void app_load(App& app) {
         }
         if (s.box_view.box >= static_cast<int>(s.boxes.size())) s.box_view.box = 0;
     }
-    launcher_refilter(s);
 
     // 坏行/坏文件只提示一次，用托盘气泡而不是模态框
     if (s.bad_lines > 0) {
@@ -748,26 +600,12 @@ void app_save_if_dirty(App& app) {
     AppState& s = app.state;
     if (!s.data_dirty) return;
     s.data_dirty = false;
-    const bool ok = save_text(app.paths, L"launcher.txt", serialize_launcher(s.groups)) &&
-                    save_text(app.paths, L"boxes.txt", serialize_boxes(s.boxes));
-    if (!ok) {
+    // 分开写：一个文件写失败不该让另一个文件连尝试都没有（评审 minor）
+    const bool box_ok = save_text(app.paths, L"boxes.txt", serialize_boxes(s.boxes));
+    if (!box_ok) {
         ::MessageBoxW(app.ctl, L"保存失败：程序目录可能已变为不可写。", L"Stargazer",
                       MB_ICONWARNING);
     }
-}
-
-// 启动当前选中的条目，然后隐藏面板。失败用弹框告知（启动是用户主动发起的，静默失败更糟）
-static void launch_selected(App& app) {
-    LauncherState& ls = app.state.launcher;
-    if (ls.sel < 0 || ls.sel >= static_cast<int>(ls.filtered.size())) return;
-    if (app.state.groups.empty()) return;
-    const LaunchItem& item = app.state.groups[ls.group].items[ls.filtered[ls.sel]];
-    std::wstring err;
-    if (!launch_item(item, &err)) {
-        ::MessageBoxW(app.panel, err.c_str(), L"Stargazer", MB_ICONWARNING);
-        return;
-    }
-    app_hide(app);
 }
 
 void app_save_ui(App& app) {
@@ -779,11 +617,6 @@ void app_save_ui(App& app) {
     Config ui;
     config_set(ui, L"w", std::to_wstring(static_cast<int>((rc.right - rc.left) / sc)));
     config_set(ui, L"h", std::to_wstring(static_cast<int>((rc.bottom - rc.top) / sc)));
-    if (!app.state.groups.empty()) {
-        const int gi = std::clamp(app.state.launcher.group, 0,
-                                  static_cast<int>(app.state.groups.size()) - 1);
-        config_set(ui, L"group", app.state.groups[gi].name);
-    }
     config_set(ui, L"view", std::to_wstring(static_cast<int>(app.state.view)));
     if (!app.state.boxes.empty()) {
         const int bi =
@@ -815,17 +648,9 @@ void app_show(App& app) {
     // 窗口现在才真正落在某块显示器上，此时取 DPI 才准（含跨显示器不同缩放）
     app.render.sync_dpi();
 
-    // 每次呼出都从干净状态开始：清空搜索、选中态归位，焦点给搜索框
+    // 每次呼出都从干净状态开始：选中态归位（输入框在下面按视图处理）
     AppState& s = app.state;
-    s.launcher.query.clear();
-    s.launcher.sel = -1;
-    s.launcher.scroll = 0;
-    launcher_refilter(s);
-    // 搜索框属于启动板：切到别的视图时不能把它的回调挂上去（Task 3 起 Box 自己管焦点）
-    if (s.view == View::Launcher) {
-        launcher_sync_search(s, app.panel, app.render.client_logical(), app.render);
-        s.launcher.search.focus();
-    } else if (s.view == View::Box) {
+    if (s.view == View::Box) {
         s.box_view.sel = -1;
         s.box_view.hover = -1;
         s.box_view.scroll = 0;
@@ -833,6 +658,8 @@ void app_show(App& app) {
         ::SetFocus(app.panel);
         // 呼出时校验当前盒子（只校验当前盒子：大盒子全量校验会拖慢呼出）
         box_request_check(app);
+    } else {
+        ::SetFocus(app.panel);  // 其他视图自己收键盘
     }
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
@@ -840,7 +667,7 @@ void app_show(App& app) {
 void app_hide(App& app) {
     if (!app.panel) return;
     app_save_if_dirty(app);  // 用户改完就切走很自然，落盘不能等退出
-    app.state.launcher.search.close();  // 悬空的输入框比看不见的窗口更让人困惑
+    app.state.box_view.edit.close();  // 悬空的输入框比看不见的窗口更让人困惑
     ::ShowWindow(app.panel, SW_HIDE);
     // 隐藏时把绘制表面还给系统：150% 缩放下 1440x930 的表面本身就有 5MB+。
     // 复用设备丢失那条路径，下次 begin() 会自动重建。

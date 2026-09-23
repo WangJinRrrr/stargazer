@@ -7,7 +7,6 @@
 
 #include "model/paths.h"
 #include "dragdrop.h"
-#include "launch.h"
 #include "persist.h"
 #include "text_io.h"
 
@@ -85,31 +84,7 @@ static void test_atomic_write_leaves_no_tmp() {
     ::DeleteFileW(file.c_str());
 }
 
-// .lnk 解析：真正造一个快捷方式再解析回来（拖入 .lnk 是主要添加方式，不能只靠手工验）
-static void test_resolve_lnk() {
-    IShellLinkW* link = nullptr;
-    CHECK(SUCCEEDED(::CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
-                                       IID_PPV_ARGS(&link))));
-    if (!link) return;
-    link->SetPath(L"C:\\Windows\\notepad.exe");
-    link->SetArguments(L"--flag value");
-
-    const std::wstring lnk = sg::join_path(temp_dir(), L"t.lnk");
-    IPersistFile* file = nullptr;
-    CHECK(SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&file))));
-    if (file) {
-        CHECK(SUCCEEDED(file->Save(lnk.c_str(), TRUE)));
-        file->Release();
-    }
-    link->Release();
-
-    const sg::LaunchItem item = sg::item_from_path(lnk);
-    CHECK_EQ(item.target, std::wstring(L"C:\\Windows\\notepad.exe"));
-    CHECK_EQ(item.args, std::wstring(L"--flag value"));
-    CHECK_EQ(item.name, std::wstring(L"t.lnk"));  // 名字暂用快捷方式文件名，用户可改名
-
-    ::DeleteFileW(lnk.c_str());
-}
+// (.lnk 解析的测试随启动板一起删除：收纳盒只把 .lnk 当作普通文件引用，不做解析。)
 
 // CF_HDROP 构造：与资源管理器互通的关键格式，最容易错的是结尾的 NUL 数量、
 // fWide 与 pFiles 偏移 —— 所以这里逐项断言，而不是“能粘进去就算过”。
@@ -166,7 +141,6 @@ int main() {
     test_read_missing_file();
     test_dir_writable_probe();
     test_atomic_write_leaves_no_tmp();
-    test_resolve_lnk();
     test_make_hdrop();
 
     if (g_failed == 0) {

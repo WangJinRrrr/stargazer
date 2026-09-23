@@ -6,19 +6,6 @@
 
 namespace sg {
 
-struct LaunchItem {
-    std::wstring name;
-    std::wstring target;   // exe / .lnk / 目录 / URL / shell: 协议
-    std::wstring args;
-    std::wstring workdir;
-    std::wstring icon;     // 自定义图标路径，空则用 target 的
-};
-
-struct LaunchGroup {
-    std::wstring name;
-    std::vector<LaunchItem> items;
-};
-
 struct BoxItem {
     std::wstring name;  // 显示名（可与真实文件名不同）
     std::wstring path;  // 绝对路径，仅引用，永不移动
@@ -41,10 +28,6 @@ struct TodoItem {
 };
 
 using Config = std::vector<std::pair<std::wstring, std::wstring>>;
-
-// 行格式：group \t name \t target \t args \t workdir \t icon
-std::wstring serialize_launcher(const std::vector<LaunchGroup>& groups);
-std::vector<LaunchGroup> parse_launcher(const std::wstring& text, int& bad);
 
 // 行格式：box \t name \t path
 std::wstring serialize_boxes(const std::vector<Box>& boxes);

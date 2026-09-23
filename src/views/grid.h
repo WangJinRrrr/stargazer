@@ -18,7 +18,7 @@ constexpr float kPad = 16.f;
 constexpr float kTabsH = 36.f;    // 分组/盒子标签行
 constexpr float kSearchH = 34.f;  // 搜索框行
 
-// 网格只认识这些中性字段，不认识 LaunchItem 也不认识 BoxItem：
+// 网格只认识这些中性字段，不认识 BoxItem：
 // 视图负责把各自的数据翻译成 GridItem。
 struct GridItem {
     std::wstring label;      // 显示名
@@ -54,9 +54,9 @@ void grid_render(Renderer& r, const GridLayout& gl, const std::vector<GridItem>&
 // 按扩展名给占位块配色（同一扩展名总是同一颜色且重启不变）
 D2D1_COLOR_F ext_color(const std::wstring& path);
 
-// --- 顶层视图标签行（启动板 / 收纳盒 / 待办 / 浏览）---
+// --- 顶层视图标签行（收纳盒 / 待办 / 浏览）---
 constexpr float kViewTabsH = 28.f;
-constexpr int kViewCount = 4;
+constexpr int kViewCount = 3;
 
 D2D1_RECT_F view_tabs_rect(D2D1_SIZE_F client);
 // 返回视图下标（0..3），未命中 -1

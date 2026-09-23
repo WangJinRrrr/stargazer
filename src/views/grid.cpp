@@ -96,12 +96,10 @@ int view_tab_hittest(D2D1_SIZE_F client, D2D1_POINT_2F pt) {
 const wchar_t* view_name(int v) {
     switch (v) {
         case 0:
-            return L"启动板";
-        case 1:
             return L"收纳盒";
-        case 2:
+        case 1:
             return L"待办";
-        case 3:
+        case 2:
             return L"浏览";
         default:
             return L"";
