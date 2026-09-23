@@ -103,12 +103,23 @@ HBRUSH edit_bg_brush() {
 
 void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initial, float dpi,
                       std::function<void(const std::wstring&)> commit,
-                      std::function<void()> cancel, float pad_x, bool center) {
+                      std::function<void()> cancel, const EditStyle& style) {
     close();
     parent = parent_wnd;
-    last_rc = rc;
     on_commit = std::move(commit);
     on_cancel = std::move(cancel);
+    const float pad_x = style.pad_x;
+    const bool center = style.center;
+    // 就地编辑：自建一个底色刷（close 时释放），父窗口在 WM_CTLCOLOREDIT 里取它。
+    // 不做每敲一个字新建刷子/位图的事 —— 内存与按键开销都是常数。
+    if (style.paint.bg != CLR_INVALID) {
+        owned_brush = ::CreateSolidBrush(style.paint.bg);
+        paint = style.paint;
+        paint.brush = owned_brush;
+        if (paint.text == CLR_INVALID) paint.text = RGB(233, 233, 233);
+    } else {
+        paint = EditPaint();
+    }
     // 角色相关标志必须在 open 时归零：否则同一个 InlineEdit 被搜索框/重命名框/新建框
     // 轮着用时，上一次身份的标志会继承下来（真 bug：重命名框会像搜索框一样失焦不关）
     on_key = nullptr;
@@ -121,9 +132,9 @@ void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initi
                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                          DEFAULT_PITCH | FF_DONTCARE, ui_font_family());
 
-    const DWORD style = WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | (center ? ES_CENTER : 0) |
-                        (multiline ? (ES_MULTILINE | ES_AUTOVSCROLL) : 0);
-    hwnd = ::CreateWindowExW(0, L"EDIT", initial.c_str(), style, rc.left, rc.top,
+    const DWORD dw_style = WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | (center ? ES_CENTER : 0) |
+                           (multiline ? (ES_MULTILINE | ES_AUTOVSCROLL) : 0);
+    hwnd = ::CreateWindowExW(0, L"EDIT", initial.c_str(), dw_style, rc.left, rc.top,
                              rc.right - rc.left, rc.bottom - rc.top, parent, nullptr,
                              ::GetModuleHandleW(nullptr), nullptr);
     if (!hwnd) {
@@ -153,7 +164,6 @@ void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initi
 
 void InlineEdit::set_rect(const RECT& rc) {
     if (hwnd) {
-        last_rc = rc;
         ::SetWindowPos(hwnd, nullptr, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
                        SWP_NOZORDER | SWP_NOACTIVATE);
     }
@@ -168,6 +178,11 @@ void InlineEdit::close() {
         ::DeleteObject(font);
         font = nullptr;
     }
+    if (owned_brush) {
+        ::DeleteObject(owned_brush);
+        owned_brush = nullptr;
+    }
+    paint = EditPaint();
     on_commit = nullptr;
     on_cancel = nullptr;
     on_key = nullptr;
@@ -192,21 +207,22 @@ void InlineEdit::focus() {
     if (hwnd) ::SetFocus(hwnd);
 }
 
-void edit_draw_focus_ring(Renderer& r, const InlineEdit& e) {
-    if (!e.is_open()) return;
-    const D2D1_RECT_F rc = r.to_logical_rect(e.last_rc);
-    // 外扩 1px：画在 EDIT 的矩形之外才看得见（EDIT 是方底且盖在容器上面）。
-    // 圆角与 views/grid.h 的 kRadiusSm(4) 一致。
-    r.stroke_round_rect(
-        D2D1::RectF(rc.left - 1.f, rc.top - 1.f, rc.right + 1.f, rc.bottom + 1.f), 4.f,
-        r.theme.accent, 1.f);
+bool edit_paint_for(HWND hwnd, EditPaint& out) {
+    DWORD_PTR ref = 0;
+    if (hwnd == nullptr ||
+        !::GetWindowSubclass(hwnd, edit_subclass, kSubclassId, &ref) || ref == 0) {
+        return false;
+    }
+    out = reinterpret_cast<const InlineEdit*>(ref)->paint;
+    return true;
 }
 
 D2D1_RECT_F edit_box_rect(const D2D1_RECT_F& area) {
     constexpr float kBox = 20.f;
     if (area.bottom - area.top > 28.f) {
-        // 多行文字行（40）：文字从第一行开始排 → 框也贴顶
-        return D2D1::RectF(area.left, area.top, area.right, area.top + kBox);
+        // 多行文字行（40）：铺满整行 —— 贴顶与 DWrite 的第一行对齐，
+        // 同时把旧文字的第二行盖掉（否则会看到新旧两段叠着）
+        return D2D1::RectF(area.left, area.top, area.right, area.bottom - 1.f);
     }
     const float c = (area.top + area.bottom) / 2.f;
     return D2D1::RectF(area.left, c - kBox / 2.f, area.right, c + kBox / 2.f);

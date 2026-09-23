@@ -330,13 +330,19 @@ void browse_delete_selected(App& app, bool recycle) {
 
 void browse_rename_selected(App& app) {
     AppState& s = app.state;
+    Renderer& r = app.render;
     BrowseState& b = s.browse;
     const int sel = b.sel;
     if (sel < 0 || sel >= static_cast<int>(b.entries.size())) return;
-    // 改名框叠在**名字区域**上（不是整行）：图标保持可见，文字起点与原名一致
+    // 就地编辑：矩形只覆盖名字区域（图标保持可见），底色 = 选中行实际填充色，
+    // 字色 = 名字最终的颜色 → 打字时看到的就是最终界面
+    EditStyle style;
+    style.pad_x = 0.f;
+    style.paint.bg = blend(r.theme.sel_fill, to_solid(r.theme.bg));
+    style.paint.text = blend(r.theme.text, style.paint.bg);
     const D2D1_RECT_F input =
-        edit_box_rect(browse_row_label_rect(s, app.render.client_logical(), sel));
-    const RECT rc = app.render.to_physical(input);
+        edit_box_rect(browse_row_label_rect(s, r.client_logical(), sel));
+    const RECT rc = r.to_physical(input);
     const std::wstring current = b.entries[static_cast<size_t>(sel)].name;
     const std::wstring dir = b.path;
     b.path_edit.open(
@@ -369,7 +375,7 @@ void browse_rename_selected(App& app) {
             ::InvalidateRect(app.panel, nullptr, FALSE);
         },
         [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); },
-        0.f, false);  // pad_x=0：矩形已经就是名字区域
+        style);
 }
 
 void browse_add_to_box(App& app) {
@@ -593,8 +599,6 @@ void browse_render(App& app) {
         const D2D1_RECT_F label = browse_row_label_rect(s, client, i);
         r.text(label, e.name, name_fmt, r.theme.text);
     }
-    // 改名框的聚焦框：画在最后，否则会被行的选中/悬停底盖掉
-    edit_draw_focus_ring(r, b.path_edit);
 }
 
 }  // namespace sg

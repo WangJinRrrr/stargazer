@@ -183,13 +183,6 @@ D2D1_POINT_2F Renderer::to_logical(POINT physical) const {
     return D2D1::Point2F(static_cast<float>(physical.x) / s, static_cast<float>(physical.y) / s);
 }
 
-D2D1_RECT_F Renderer::to_logical_rect(const RECT& physical) const {
-    const float s = scale();
-    return D2D1::RectF(static_cast<float>(physical.left) / s, static_cast<float>(physical.top) / s,
-                       static_cast<float>(physical.right) / s,
-                       static_cast<float>(physical.bottom) / s);
-}
-
 RECT Renderer::to_physical(const D2D1_RECT_F& logic) const {
     const float s = scale();
     RECT rc{};
@@ -239,8 +232,24 @@ void Renderer::text(const D2D1_RECT_F& r, const std::wstring& s, IDWriteTextForm
                   D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
-ID2D1Bitmap* make_bitmap(Renderer& r, const void* pixels, int w, int h) {
-    if (!r.rt || w <= 0 || h <= 0 || !pixels) return nullptr;
+COLORREF to_solid(D2D1_COLOR_F c) {
+    const auto b = [](float v) {
+        const float x = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
+        return static_cast<int>(x * 255.f + 0.5f);
+    };
+    return RGB(b(c.r), b(c.g), b(c.b));
+}
+
+COLORREF blend(D2D1_COLOR_F fg, COLORREF under) {
+    const float a = fg.a < 0.f ? 0.f : (fg.a > 1.f ? 1.f : fg.a);
+    const float ur = static_cast<float>(GetRValue(under)) / 255.f;
+    const float ug = static_cast<float>(GetGValue(under)) / 255.f;
+    const float ub = static_cast<float>(GetBValue(under)) / 255.f;
+    return to_solid(D2D1::ColorF(fg.r * a + ur * (1.f - a), fg.g * a + ug * (1.f - a),
+                                 fg.b * a + ub * (1.f - a), 1.f));
+}
+
+ID2D1Bitmap* make_bitmap(Renderer& r, const void* pixels, int w, int h) {    if (!r.rt || w <= 0 || h <= 0 || !pixels) return nullptr;
     const D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), r.dpi, r.dpi);
     ID2D1Bitmap* bmp = nullptr;

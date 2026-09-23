@@ -35,7 +35,7 @@ D2D1_RECT_F grid_label_rect(const D2D1_RECT_F& cell) {
 void grid_render(Renderer& r, const GridLayout& gl, const std::vector<GridItem>& items,
                  int scroll) {
     IDWriteTextFormat* name_fmt =
-        r.format(13.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
+        r.format(14.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
     for (size_t i = 0; i < items.size(); ++i) {
         const int row = static_cast<int>(i) / gl.cols;
         if (row < scroll || row >= scroll + gl.rows_visible) continue;  // 只画可见行

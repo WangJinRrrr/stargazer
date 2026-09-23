@@ -81,8 +81,6 @@ struct Renderer {
     D2D1_SIZE_F client_logical() const;
     // 鼠标消息给的是物理客户区坐标 -> 逻辑 DIP
     D2D1_POINT_2F to_logical(POINT physical) const;
-    // 物理像素矩形 -> 逻辑 DIP 矩形（子 HWND 的聚焦框要用它）
-    D2D1_RECT_F to_logical_rect(const RECT& physical) const;
     // 逻辑 DIP 矩形 -> 物理像素矩形（给子 HWND 用，如 EDIT）
     RECT to_physical(const D2D1_RECT_F& logic) const;
 
@@ -99,5 +97,10 @@ private:
 };
 
 ID2D1Bitmap* make_bitmap(Renderer& r, const void* pixels, int w, int h);
+
+// 半透明主题色 -> 实色。原生 EDIT 子控件只能给实色（WM_CTLCOLOREDIT），
+// 而 Theme 里的层色是半透明白；不换算就会与周围差一截。
+COLORREF to_solid(D2D1_COLOR_F c);               // c 必须不透明（如 theme.bg）
+COLORREF blend(D2D1_COLOR_F fg, COLORREF under);  // fg 叠在实色 under 上
 
 }  // namespace sg

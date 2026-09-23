@@ -254,8 +254,6 @@ void todo_render(App& app) {
         r.text(D2D1::RectF(inner.left + 10.f, in.top, inner.right, in.bottom), L"记一条…",
                r.format(14.f), r.theme.text_faint);
     }
-    // 改名框的聚焦框：画在最后，否则会被行的选中/悬停底盖掉
-    edit_draw_focus_ring(r, t.edit);
 }
 
 bool todo_keydown(App& app, UINT vk) {
@@ -636,22 +634,31 @@ void todo_copy_selected(App& app) {
 void todo_rename_selected(App& app) {
     AppState& s = app.state;
     TodoState& t = s.todo;
+    Renderer& r = app.render;
     if (t.sel < 0 || t.sel >= static_cast<int>(s.todos.size())) return;
     const TodoItem& item = s.todos[static_cast<size_t>(t.sel)];
     if (item.kind == TodoKind::Image) {
         app_notify(app, L"图片条目没有文字可改（删了重记或改文件名）");
         return;
     }
-    // 改名框叠在**行内文字区域**上（不是整行）：复选框与缩略图保持可见，文字起点与原文一致
-    const D2D1_RECT_F list = todo_list_rect(app.render.client_logical());
+    // 就地编辑：矩形只覆盖行内文字区域（复选框保持可见），底色 = 选中行实际填充色，
+    // 字色 = 这段文字最终的颜色（已完成=灰、链接=强调色）→ 打字时看到的就是最终界面
+    EditStyle style;
+    style.pad_x = 0.f;
+    style.paint.bg = blend(r.theme.sel_fill, to_solid(r.theme.bg));
+    const D2D1_COLOR_F fg = item.done ? r.theme.text_faint
+                                      : (item.kind == TodoKind::Link ? r.theme.accent
+                                                                     : r.theme.text);
+    style.paint.text = blend(fg, style.paint.bg);
+    const D2D1_RECT_F list = todo_list_rect(r.client_logical());
     const float top = list.top + t.offsets[static_cast<size_t>(t.sel)] - t.scroll;
     const D2D1_RECT_F row =
         D2D1::RectF(list.left, top, list.right, top + todo_row_height(item));
-    const RECT rc = app.render.to_physical(edit_box_rect(todo_row_text_rect(row)));
+    const RECT rc = r.to_physical(edit_box_rect(todo_row_text_rect(row)));
     const long long id = item.id;
     const std::wstring current = item.text;
     t.edit.open(
-        app.panel, rc, current, app.render.dpi,
+        app.panel, rc, current, r.dpi,
         [&app, id, current](const std::wstring& text) {
             AppState& st = app.state;
             if (!text.empty() && text != current) {
@@ -667,8 +674,7 @@ void todo_rename_selected(App& app) {
             todo_rebuild_layout(st, app.render.client_logical());
             ::InvalidateRect(app.panel, nullptr, FALSE);
         },
-        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); },
-        0.f, false);  // pad_x=0：矩形已经就是行内文字区域
+        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); }, style);
 }
 
 void todo_context_menu(App& app, POINT screen_pt, POINT client_pt) {

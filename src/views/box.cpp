@@ -158,8 +158,6 @@ void box_render(App& app) {
         r.text(hint, L"这个盒子还是空的：把文件拖到窗口里就会添加引用", r.format(14.f),
                r.theme.text_faint);
     }
-    // 改名框的聚焦框：画在最后，否则会被格子/标签的底盖掉
-    edit_draw_focus_ring(r, s.box_view.edit);
 }
 
 bool box_keydown(App& app, UINT vk) {
@@ -223,18 +221,26 @@ void box_delete_selected(App& app) {
 
 void box_rename_selected(App& app) {
     AppState& s = app.state;
+    Renderer& r = app.render;
     if (s.boxes.empty()) return;
     const int sel = s.box_view.sel;
     auto& items = s.boxes[s.box_view.box].items;
     if (sel < 0 || sel >= static_cast<int>(items.size())) return;
 
-    // 改名框叠在**名字区域**上（不是整格）：图标保持可见，文字起点与原名一致
-    const D2D1_RECT_F input = edit_box_rect(grid_label_rect(box_cell_rect(s, app.render.client_logical(), sel)));
-    const RECT rc = app.render.to_physical(input);
+    // 就地编辑：矩形只覆盖**名字区域**（图标保持可见），底色 = 选中格实际填充色，
+    // 字色 = 该名字最终的颜色（失效项是灰的）→ 打字时看到的就是最终界面
+    EditStyle style;
+    style.pad_x = 0.f;
+    style.paint.bg = blend(r.theme.sel_fill, to_solid(r.theme.bg));
+    style.paint.text =
+        blend(items[sel].missing ? r.theme.text_faint : r.theme.text, style.paint.bg);
+    const D2D1_RECT_F input =
+        edit_box_rect(grid_label_rect(box_cell_rect(s, app.render.client_logical(), sel)));
+    const RECT rc = r.to_physical(input);
     const int box = s.box_view.box;
     const std::wstring current = items[sel].name;
     s.box_view.edit.open(
-        app.panel, rc, current, app.render.dpi,
+        app.panel, rc, current, r.dpi,
         [&app, box, sel](const std::wstring& t) {
             AppState& st = app.state;
             if (!t.empty() && box < static_cast<int>(st.boxes.size())) {
@@ -247,8 +253,7 @@ void box_rename_selected(App& app) {
             box_clamp(st, app.render.client_logical());
             ::InvalidateRect(app.panel, nullptr, FALSE);
         },
-        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); },
-        0.f, false);  // pad_x=0：矩形已经就是名字区域
+        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); }, style);
 }
 
 void box_add_box(App& app) {
@@ -270,14 +275,23 @@ void box_add_box(App& app) {
 
 void box_rename_box(App& app, int index) {
     AppState& s = app.state;
+    Renderer& r = app.render;
     if (index < 0 || index >= static_cast<int>(s.boxes.size())) return;
-    // 改名框叠在药丸上，并且**居中**：标签文字本来就是居中的，不居中就会一改名就“跳”到左边
+    // 就地编辑：居中（标签文字本来居中），配色取药丸**当前实际的底**与字色 ——
+    // 打字时看到的就是这个标签最终的样子
+    EditStyle style;
+    style.pad_x = 0.f;
+    style.center = true;
+    const bool active = index == s.box_view.box;
+    style.paint.bg = active ? to_solid(r.theme.accent)
+                            : blend(r.theme.card, to_solid(r.theme.bg));
+    style.paint.text = blend(active ? r.theme.on_accent : r.theme.text_dim, style.paint.bg);
     const D2D1_RECT_F pill =
         edit_box_rect(box_tab_pill_rect(s, app.render.client_logical(), index));
-    const RECT rc = app.render.to_physical(pill);
+    const RECT rc = r.to_physical(pill);
     const std::wstring current = s.boxes[index].name;
     s.box_view.edit.open(
-        app.panel, rc, current, app.render.dpi,
+        app.panel, rc, current, r.dpi,
         [&app, index](const std::wstring& t) {
             AppState& st = app.state;
             // 重名盒子在 parse 时会被合并（数据层语义），所以改名要拒绝重名
@@ -288,8 +302,7 @@ void box_rename_box(App& app, int index) {
             }
             ::InvalidateRect(app.panel, nullptr, FALSE);
         },
-        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); },
-        0.f, true);  // pad_x=0 + ES_CENTER：文字居中
+        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); }, style);
 }
 
 void box_delete_box(App& app, int index) {

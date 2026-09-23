@@ -484,11 +484,20 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_CTLCOLOREDIT: {
-            // EDIT 子控件的底/字色：与 Theme::control 叠在 Theme::bg 上的实色一致
-            // （0x202020 + 6% 白 ≈ #2E2E2E；文字用 TextFillPrimary 的实色 ≈ #E9E9E9）
+            // EDIT 子控件只能给实色：默认（待办输入框 / 路径栏）用“Theme::control 叠在 bg 上”；
+            // 改名框用自己那套（底色 = 该行实际的填充色、字色 = 最终文字色）→
+            // 于是打字时看到的就是那段文字最终的样子（见 EditStyle 的注释）。
             HDC dc = reinterpret_cast<HDC>(wp);
-            ::SetTextColor(dc, RGB(233, 233, 233));
-            ::SetBkColor(dc, RGB(46, 46, 46));
+            EditPaint p;
+            if (app && edit_paint_for(reinterpret_cast<HWND>(lp), p) && p.bg != CLR_INVALID) {
+                ::SetTextColor(dc, p.text);
+                ::SetBkColor(dc, p.bg);
+                return reinterpret_cast<LRESULT>(p.brush ? p.brush : edit_bg_brush());
+            }
+            const Theme& th = app ? app->render.theme : Theme{};
+            const COLORREF bg = blend(th.control, to_solid(th.bg));
+            ::SetTextColor(dc, blend(th.text, bg));
+            ::SetBkColor(dc, bg);
             return reinterpret_cast<LRESULT>(edit_bg_brush());
         }
         case WM_MOUSEMOVE: {
