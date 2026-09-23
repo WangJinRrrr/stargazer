@@ -193,9 +193,28 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ::EndPaint(hwnd, &ps);
             return 0;
         }
+        case WM_CTLCOLOREDIT: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            ::SetTextColor(dc, RGB(217, 222, 230));
+            ::SetBkColor(dc, RGB(37, 39, 45));
+            return reinterpret_cast<LRESULT>(edit_bg_brush());
+        }
         case WM_KEYDOWN:
             // app 为空的路径理论到不了这里，但不必为此崩一次
             if (!app) return 0;
+            if (wp == VK_F2) {
+                // TEMP(Task 8 验证钩子，Task 9 删除)：在卡片内打开一个 InlineEdit，
+                // 提交后把结果显示到窗口标题上供探针读取
+                const D2D1_RECT_F wanted = D2D1::RectF(200.f, 120.f, 700.f, 152.f);
+                const RECT rc = app->render.to_physical(wanted);
+                app->edit.open(hwnd, rc, L"", app->render.dpi,
+                               [app](const std::wstring& t) {
+                                   ::SetWindowTextW(app->panel,
+                                                    (L"committed:" + t).c_str());
+                               },
+                               nullptr);
+                return 0;
+            }
             // TEMP(Task 9 移除)：按 1/2 验证图标三级提取与异步回投
             if (wp == L'1') {
                 app->debug_icon = L"C:\\Windows\\notepad.exe";
@@ -212,10 +231,14 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == VK_ESCAPE) app_hide(*app);
             return 0;
         case WM_CLOSE:
+            if (app) app->edit.close();
             app_hide(*app);  // 关面板不等于退出程序
             return 0;
         case WM_DESTROY:
-            if (app) app->render.shutdown();
+            if (app) {
+                app->edit.close();
+                app->render.shutdown();
+            }
             return 0;
         default:
             break;
@@ -244,11 +267,14 @@ void app_show(App& app) {
 
     ::SetWindowPos(app.panel, HWND_TOPMOST, x, y, w, h, SWP_SHOWWINDOW);
     ::SetForegroundWindow(app.panel);
+    // 窗口现在才真正落在某块显示器上，此时取 DPI 才准（含跨显示器不同缩放）
+    app.render.sync_dpi();
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
 void app_hide(App& app) {
     if (!app.panel) return;
+    app.edit.close();  // 悬空的输入框比看不见的窗口更让人困惑
     ::ShowWindow(app.panel, SW_HIDE);
     // 隐藏时把绘制表面还给系统：150% 缩放下 1440x930 的表面本身就有 5MB+。
     // 复用设备丢失那条路径，下次 begin() 会自动重建。

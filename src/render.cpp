@@ -14,8 +14,17 @@ bool Renderer::init(HWND wnd) {
         return false;
     }
     dpi = static_cast<float>(::GetDpiForWindow(hwnd));
+    if (dpi <= 0.f) dpi = static_cast<float>(::GetDpiForSystem());
     if (dpi <= 0.f) dpi = 96.f;
     return create_device_resources();
+}
+
+bool Renderer::sync_dpi() {
+    const float d = static_cast<float>(::GetDpiForWindow(hwnd));
+    if (d <= 0.f || d == dpi) return false;
+    dpi = d;
+    discard_device_resources();  // 下一次 begin() 按新 DPI 重建
+    return true;
 }
 
 bool Renderer::create_device_resources() {

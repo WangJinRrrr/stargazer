@@ -4,6 +4,7 @@
 
 #include <string>
 
+#include "edit.h"
 #include "persist.h"
 #include "render.h"
 
@@ -34,6 +35,7 @@ struct App {
     bool in_drag = false;
     bool running = true;
     bool mouse_tracking = false;
+    InlineEdit edit;  // 搜索框/重命名/新建共用同一个 EDIT 实例
     // TEMP(Task 9 移除)：验证图标三级提取与异步回投
     std::wstring debug_icon;
 };

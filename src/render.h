@@ -33,6 +33,11 @@ struct Renderer {
     bool init(HWND hwnd);
     void shutdown();
 
+    // 呼出/跨显示器移动后重新取一次窗口所在显示器的 DPI。
+    // 窗口未显示时 GetDpiForWindow 取不准（懒加载后这一点就会咬人），
+    // 所以创建时的值只能当初始猜测，这里校正；变了就释放表面让下一帧按新缩放重建。
+    bool sync_dpi();
+
     bool begin();  // 取到 rt 并 BeginDraw；false 表示跳过这一帧
     void end();    // EndDraw；D2DERR_RECREATE_TARGET 时重建设备资源
 
