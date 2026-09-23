@@ -46,12 +46,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
         return 0;
     }
 
-    const HRESULT hr = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    // 拖放要求 OLE 初始化：只调 CoInitializeEx 时 RegisterDragDrop 会返回 0x8007000E (E_OUTOFMEMORY)，
+    // 面板根本不会成为拖放目标 —— 症状是拖动时光标全程显示禁止（实测日志确认）。
+    // OleInitialize 内部既做 STA 初始化也做 OLE 初始化（返回值 S_FALSE = 已经初始化过）。
+    const HRESULT hr = ::OleInitialize(nullptr);
     if (FAILED(hr)) return 1;
 
     sg::App app;
     if (!sg::app_init(app, inst)) {
-        ::CoUninitialize();
+        ::OleUninitialize();
         if (once) ::CloseHandle(once);
         return 1;
     }
@@ -75,7 +78,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     sg::app_save_if_dirty(app);
     sg::app_save_ui(app);
     sg::app_shutdown(app);
-    ::CoUninitialize();
+    ::OleUninitialize();
     if (once) ::CloseHandle(once);
     return 0;
 }

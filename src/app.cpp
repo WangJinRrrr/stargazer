@@ -161,7 +161,11 @@ bool ensure_panel(App& app) {
 
     // 拖放注册在面板窗口上（用户是往面板上拖），面板是懒创建的，所以注册也在这里
     dragdrop_set_drag_flag(&app.in_drag);
-    dragdrop_init(app.panel);
+    if (!dragdrop_init(app.panel)) {
+        // 静默失败会表现为“拖动时光标全程禁止”而完全看不出原因（真的踩过），
+        // 所以至少要让用户知道有东西坏了（spec §12：用气泡不用弹框）
+        tray_balloon(app, L"Stargazer", L"拖放初始化失败：往窗口里拖文件将不会被接受。");
+    }
     dragdrop_set_hook([&app](const std::vector<std::wstring>& paths) {
         AppState& s = app.state;
         if (s.view == View::Box) {
