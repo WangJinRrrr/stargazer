@@ -81,6 +81,18 @@ bool load_text(const Paths& p, const wchar_t* name, std::wstring& out) {
     return read_file_utf8(data_file(p, name), out);
 }
 
+bool data_file_exists(const Paths& p, const wchar_t* name) {
+    const DWORD a = ::GetFileAttributesW(data_file(p, name).c_str());
+    return a != INVALID_FILE_ATTRIBUTES;
+}
+
+bool backup_bad(const Paths& p, const wchar_t* name) {
+    const std::wstring src = data_file(p, name);
+    const std::wstring dst = src + L".bad";
+    ::DeleteFileW(dst.c_str());  // 只保留最近一次坏文件
+    return ::MoveFileExW(src.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
+}
+
 bool autostart_enabled() {
     HKEY key = nullptr;
     if (::RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_READ, &key) != ERROR_SUCCESS) return false;

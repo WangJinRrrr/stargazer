@@ -151,7 +151,7 @@ static void test_launcher_roundtrip_and_bad_line() {
     groups[0].items.push_back({ L"记事本", L"C:\\Windows\\notepad.exe", L"", L"", L"" });
     groups[0].items.push_back({ L"带\t制表符的名字", L"D:\\a\\b.lnk", L"--x \"y z\"", L"D:\\a", L"D:\\ico.ico" });
     groups[1].name = L"网盘";
-    groups[1].items.push_back({ L"", L"", L"", L"", L"" });  // 全空字段必须能往返
+    groups[1].items.push_back({ L"电影", L"D:\\网盘\\电影", L"", L"", L"" });
 
     int bad = 0;
     auto back = sg::parse_launcher(sg::serialize_launcher(groups), bad);
@@ -161,7 +161,8 @@ static void test_launcher_roundtrip_and_bad_line() {
     CHECK_EQ(back[0].items.size(), size_t{2});
     CHECK_EQ(back[0].items[1].name, std::wstring(L"带\t制表符的名字"));
     CHECK_EQ(back[0].items[1].args, std::wstring(L"--x \"y z\""));
-    CHECK_EQ(back[1].items[0].target, std::wstring(L""));
+    // 名称与目标都为空的行 = “只声明分组存在”，见 test_empty_group_roundtrip
+    CHECK_EQ(back[1].items.size(), size_t{1});
 
     // 手工插一行字段数不对的
     const std::wstring broken = sg::serialize_launcher(groups) + L"少\t字段\n";
@@ -170,6 +171,22 @@ static void test_launcher_roundtrip_and_bad_line() {
     CHECK_EQ(back2.size(), size_t{2});          // 坏行不产生记录，分组数不变
     CHECK_EQ(back2[0].items.size(), size_t{2});  // 原条目一个不少
     CHECK_EQ(back2[1].items.size(), size_t{1});
+}
+
+// 回归：空分组必须能落盘并读回来（否则用户新建的分组重启后就消失）
+static void test_empty_group_roundtrip() {
+    std::vector<sg::LaunchGroup> groups(2);
+    groups[0].name = L"常用";  // 完全空
+    groups[1].name = L"网盘";
+    groups[1].items.push_back({ L"电影", L"D:\\网盘\\电影" });
+
+    int bad = 0;
+    auto back = sg::parse_launcher(sg::serialize_launcher(groups), bad);
+    CHECK_EQ(bad, 0);
+    CHECK_EQ(back.size(), size_t{2});
+    CHECK_EQ(back[0].name, std::wstring(L"常用"));
+    CHECK_EQ(back[0].items.size(), size_t{0});   // 空分组名保住了，但没多出幽灵条目
+    CHECK_EQ(back[1].items.size(), size_t{1});
 }
 
 static void test_boxes_roundtrip() {
@@ -267,6 +284,7 @@ int main() {
     test_contains_ci();
     test_natural_compare();
     test_launcher_roundtrip_and_bad_line();
+    test_empty_group_roundtrip();
     test_boxes_roundtrip();
     test_todos_roundtrip_and_sort();
     test_config();

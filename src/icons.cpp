@@ -144,11 +144,14 @@ bool extract_icon(const Request& req, std::vector<uint8_t>& px, int& w, int& h) 
     const DWORD attrs = req.is_dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
 
     if (!req.is_dir) {
-        ::SHGetFileInfoW(req.path.c_str(), 0, &sfi, sizeof(sfi), SHGFI_SYSICONINDEX);
-        if (HICON icon = icon_from_image_list(sfi.iIcon)) {
-            const bool ok = hicon_to_bgra(icon, px, w, h);
-            ::DestroyIcon(icon);
-            if (ok) return true;
+        // 必须看返回值：失败时 sfi 是全零，而 iIcon==0 是合法索引，
+        // 会把“按扩展名推断”这一级直接跳过并给出一个错误图标
+        if (::SHGetFileInfoW(req.path.c_str(), 0, &sfi, sizeof(sfi), SHGFI_SYSICONINDEX)) {
+            if (HICON icon = icon_from_image_list(sfi.iIcon)) {
+                const bool ok = hicon_to_bgra(icon, px, w, h);
+                ::DestroyIcon(icon);
+                if (ok) return true;
+            }
         }
     }
 

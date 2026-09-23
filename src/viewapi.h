@@ -34,7 +34,11 @@ struct AppState {
     int bad_lines = 0;
     View view = View::Launcher;
     LauncherState launcher;
-    bool data_dirty = false;  // 变更后由 app 层落盘
+    bool data_dirty = false;
+    // ui.txt 里想要的窗口尺寸（逻辑像素）。0 = 用默认值。
+    // 存起来等面板真正创建时再应用：app_load 跑在面板存在之前，那里改尺寸是死代码。
+    int ui_w = 0;
+    int ui_h = 0;  // 变更后由 app 层落盘
 };
 
 }  // namespace sg

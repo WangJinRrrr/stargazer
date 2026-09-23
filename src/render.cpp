@@ -23,7 +23,9 @@ bool Renderer::sync_dpi() {
     const float d = static_cast<float>(::GetDpiForWindow(hwnd));
     if (d <= 0.f || d == dpi) return false;
     dpi = d;
-    discard_device_resources();  // 下一次 begin() 按新 DPI 重建
+    // 图标位图也属于旧设备，必须一起丢弃（否则会把旧设备的位图画到新设备上）
+    discard_device_resources();
+    icons_on_device_lost();
     return true;
 }
 
@@ -43,7 +45,12 @@ bool Renderer::create_device_resources() {
         D2D1::HwndRenderTargetProperties(hwnd, size, D2D1_PRESENT_OPTIONS_NONE);
 
     if (FAILED(factory->CreateHwndRenderTarget(props, hwnd_props, &rt))) return false;
-    if (FAILED(rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush))) return false;
+    if (FAILED(rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush))) {
+        // 必须连 rt 一起释放：否则留下 rt != null 而 brush == null 的状态，
+        // 下一次 begin() 不会重建，后面每个 fill_/text 都会空指针崩
+        discard_device_resources();
+        return false;
+    }
     return true;
 }
 

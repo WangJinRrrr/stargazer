@@ -23,14 +23,17 @@ void launcher_begin_rename(App& app, D2D1_SIZE_F client) {
     const std::wstring current = s.groups[group].items[raw].name;
     ls.search.open(
         app.panel, rc, current, app.render.dpi,
-        [&s, group, raw](const std::wstring& t) {
+        [&app, group, raw](const std::wstring& t) {
+            AppState& s = app.state;
             if (!t.empty()) {
                 s.groups[group].items[raw].name = t;
                 s.data_dirty = true;
             }
             launcher_refilter(s);
+            // 重命名框占用的就是搜索框那个 InlineEdit，用完得把搜索框还回来
+            launcher_sync_search(s, app.panel, app.render.client_logical(), app.render);
         },
-        nullptr);
+        [&app]() { launcher_sync_search(app.state, app.panel, app.render.client_logical(), app.render); });
 }
 
 void launcher_begin_new_item(App& app, D2D1_SIZE_F client) {
@@ -54,16 +57,22 @@ void launcher_begin_new_item(App& app, D2D1_SIZE_F client) {
             st.launcher.search.open(
                 app.panel, rc2, L"", app.render.dpi,
                 [&app, pending](const std::wstring& target) {
-                    if (target.empty()) return;
                     AppState& s2 = app.state;
-                    const int gi =
-                        std::clamp(s2.launcher.group, 0, static_cast<int>(s2.groups.size()) - 1);
-                    s2.groups[gi].items.push_back(item_from_path_keep_name(target, *pending));
-                    s2.data_dirty = true;
-                    launcher_refilter(s2);
+                    if (!target.empty()) {
+                        const int gi =
+                            std::clamp(s2.launcher.group, 0, static_cast<int>(s2.groups.size()) - 1);
+                        s2.groups[gi].items.push_back(item_from_path_keep_name(target, *pending));
+                        s2.data_dirty = true;
+                        launcher_refilter(s2);
+                    }
+                    // 两步输入用完，把搜索框还回来
+                    launcher_sync_search(s2, app.panel, app.render.client_logical(), app.render);
                     ::InvalidateRect(app.panel, nullptr, FALSE);
                 },
-                nullptr);
+                [&app]() {
+                    launcher_sync_search(app.state, app.panel, app.render.client_logical(),
+                                         app.render);
+                });
         },
         nullptr);
 }

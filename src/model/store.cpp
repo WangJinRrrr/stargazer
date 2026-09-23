@@ -10,6 +10,12 @@ namespace sg {
 std::wstring serialize_launcher(const std::vector<LaunchGroup>& groups) {
     std::vector<std::vector<std::wstring>> rows;
     for (const auto& g : groups) {
+        if (g.items.empty()) {
+            // 空分组也要落盘，否则用户新建的分组重启后就没了。
+            // 用“名称与目标都为空”的行当占位，parse 时认出它不建条目。
+            rows.push_back({ g.name, L"", L"", L"", L"", L"" });
+            continue;
+        }
         for (const auto& it : g.items) {
             rows.push_back({ g.name, it.name, it.target, it.args, it.workdir, it.icon });
         }
@@ -27,6 +33,7 @@ std::vector<LaunchGroup> parse_launcher(const std::wstring& text, int& bad) {
             groups.push_back(LaunchGroup{ r[0], {} });
             g = groups.end() - 1;
         }
+        if (r[1].empty() && r[2].empty()) continue;  // 空分组占位行
         g->items.push_back(LaunchItem{ r[1], r[2], r[3], r[4], r[5] });
     }
     return groups;

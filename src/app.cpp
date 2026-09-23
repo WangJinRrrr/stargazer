@@ -22,6 +22,44 @@ static void launch_selected(App& app);  // 定义在下方，先声明（双击�
 namespace {
 
 const UINT kTrayId = 1;
+
+// 崩溃日志路径。写不进去就算了，崩溃路径上不能再抛异常
+std::wstring g_crash_log;
+
+LONG WINAPI crash_filter(EXCEPTION_POINTERS* info) {
+    if (!g_crash_log.empty()) {
+        HANDLE h = ::CreateFileW(g_crash_log.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+                                 OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            SYSTEMTIME st{};
+            ::GetLocalTime(&st);
+            wchar_t line[256] = {};
+            ::swprintf_s(line, L"[%04d-%02d-%02d %02d:%02d:%02d] 异常码 0x%08X 地址 %p\r\n", st.wYear,
+                         st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+                         info ? info->ExceptionRecord->ExceptionCode : 0u,
+                         info ? info->ExceptionRecord->ExceptionAddress : nullptr);
+            DWORD written = 0;
+            ::WriteFile(h, line, static_cast<DWORD>(wcslen(line) * sizeof(wchar_t)), &written,
+                        nullptr);
+            ::CloseHandle(h);
+        }
+    }
+    // 写日志后直接结束进程：恢复后的进程状态不可信，继续跑只会损坏数据文件
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+// 托盘气泡。坏行、保存失败等一律走它，不弹模态框打断操作流
+void tray_balloon(App& app, const wchar_t* title, const std::wstring& text) {
+    NOTIFYICONDATAW nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = app.ctl;
+    nid.uID = kTrayId;
+    nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = NIIF_INFO;
+    wcsncpy_s(nid.szInfoTitle, title, _TRUNCATE);
+    wcsncpy_s(nid.szInfo, text.c_str(), _TRUNCATE);
+    ::Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
 const UINT kDefaultHotkeyMods = MOD_CONTROL | MOD_SHIFT;
 const UINT kDefaultHotkeyKey = VK_SPACE;
 
@@ -101,11 +139,20 @@ bool ensure_panel(App& app) {
     if (app.panel) return true;
 
     const int dpi = static_cast<int>(::GetDpiForSystem());
-    const int w = ::MulDiv(kDefaultW, dpi, 96);
-    const int h = ::MulDiv(kDefaultH, dpi, 96);
+    const int def_w = ::MulDiv(kDefaultW, dpi, 96);
+    const int def_h = ::MulDiv(kDefaultH, dpi, 96);
+    // 上次的尺寸（ui.txt 存的是逻辑像素）在这里生效：app_load 跑在面板创建之前
+    int w = def_w;
+    int h = def_h;
+    if (app.state.ui_w > 0 && app.state.ui_h > 0) {
+        w = ::MulDiv(app.state.ui_w, dpi, 96);
+        h = ::MulDiv(app.state.ui_h, dpi, 96);
+    }
 
+    // WS_THICKFRAME 才让鼠标能拉边框缩放；配 WM_NCCALCSIZE 返回 0 去掉系统边框，保持无边框外观
     app.panel = ::CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kPanelClass, L"Stargazer",
-                                  WS_POPUP, 0, 0, w, h, nullptr, nullptr, app.inst, &app);
+                                  WS_POPUP | WS_THICKFRAME, 0, 0, w, h, nullptr, nullptr,
+                                  app.inst, &app);
     if (!app.panel) return false;
 
     app.render.init(app.panel);  // 内部会取 GetDpiForWindow，与上面 dpi 一致
@@ -168,6 +215,39 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                 reinterpret_cast<LONG_PTR>(
                                     reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
             return TRUE;
+        case WM_NCCALCSIZE:
+            return 0;  // 客户区 = 整个窗口：WS_THICKFRAME 只用来提供缩放热区
+        case WM_NCHITTEST: {
+            // 无边框窗口自己给出命中区：顶部标题条拖动移动，四边/四角缩放
+            const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            RECT rc{};
+            ::GetWindowRect(hwnd, &rc);
+            const int m = ::MulDiv(6, static_cast<int>(::GetDpiForWindow(hwnd)), 96);  // 缩放热区
+            const bool left = pt.x < rc.left + m;
+            const bool right = pt.x >= rc.right - m;
+            const bool top = pt.y < rc.top + m;
+            const bool bottom = pt.y >= rc.bottom - m;
+            if (top && left) return HTTOPLEFT;
+            if (top && right) return HTTOPRIGHT;
+            if (bottom && left) return HTBOTTOMLEFT;
+            if (bottom && right) return HTBOTTOMRIGHT;
+            if (left) return HTLEFT;
+            if (right) return HTRIGHT;
+            if (top) return HTTOP;
+            if (bottom) return HTBOTTOM;
+            // 顶部标题条（逻辑高 52）= 拖动区；子 EDIT 不会被走到这里
+            const int title_h = ::MulDiv(52, static_cast<int>(::GetDpiForWindow(hwnd)), 96);
+            if (pt.y < rc.top + title_h) return HTCAPTION;
+            return HTCLIENT;
+        }
+        case WM_MOUSEWHEEL: {
+            if (!app) return 0;
+            const int delta = GET_WHEEL_DELTA_WPARAM(wp);
+            LauncherState& ls = app->state.launcher;
+            ls.scroll = std::max(0, ls.scroll - (delta > 0 ? 1 : -1));
+            ::InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         case WM_SIZE:
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -255,6 +335,16 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        case WM_CAPTURECHANGED:
+            // 捕获被别的窗口抢走（alt-tab 等）：把内部拖拽状态收干净，
+            // 否则 internal_drag 一直是 true，悬停高亮永远不恢复
+            if (app && app->internal_drag) {
+                app->internal_drag = false;
+                app->drag_from = -1;
+                app->state.launcher.drag_over_tab = -1;
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
         case WM_LBUTTONUP:
             if (app && app->internal_drag) {
                 app->internal_drag = false;
@@ -369,13 +459,19 @@ void app_load(App& app) {
     AppState& s = app.state;
     std::wstring text;
 
-    if (load_text(app.paths, L"launcher.txt", text)) {
+    // 读不出来但文件确实存在 => 编码不对（例如被存成了 ANSI）。
+    // 先备份成 .bad：否则用户改一次就把乱码写回去，永久损坏。
+    if (data_file_exists(app.paths, L"launcher.txt") &&
+        !load_text(app.paths, L"launcher.txt", text)) {
+        backup_bad(app.paths, L"launcher.txt");
+        ++s.bad_lines;
+    } else if (!text.empty()) {
         int bad = 0;
         s.groups = parse_launcher(text, bad);
         s.bad_lines += bad;
     }
     if (s.groups.empty()) {
-        // 首次运行给一个能直接用的分组，而不是空白界面
+        // 首次运行（或文件读坏了）给一个能直接用的分组，而不是空白界面
         s.groups.push_back(LaunchGroup{ L"常用", {} });
     }
 
@@ -398,15 +494,19 @@ void app_load(App& app) {
         }
         const std::wstring w = config_get(ui, L"w", L"");
         const std::wstring h = config_get(ui, L"h", L"");
-        if (!w.empty() && !h.empty() && app.panel) {
-            // ui.txt 里的是逻辑像素，SetWindowPos 要物理像素
-            const float sc = app.render.scale();
-            ::SetWindowPos(app.panel, nullptr, 0, 0,
-                           static_cast<int>(_wtoi(w.c_str()) * sc),
-                           static_cast<int>(_wtoi(h.c_str()) * sc), SWP_NOMOVE | SWP_NOZORDER);
+        if (!w.empty() && !h.empty()) {
+            s.ui_w = _wtoi(w.c_str());
+            s.ui_h = _wtoi(h.c_str());
         }
     }
     launcher_refilter(s);
+
+    // 坏行/坏文件只提示一次，用托盘气泡而不是模态框
+    if (s.bad_lines > 0) {
+        tray_balloon(app, L"Stargazer",
+                     L"数据文件里有 " + std::to_wstring(s.bad_lines) +
+                         L" 处无法解析的内容，已跳过（原文件已备份为 .bad）。");
+    }
 }
 
 void app_save_if_dirty(App& app) {
@@ -526,6 +626,9 @@ bool app_init(App& app, HINSTANCE inst) {
         ::MessageBoxW(nullptr, msg.c_str(), L"Stargazer", MB_ICONERROR);
         return false;
     }
+
+    g_crash_log = join_path(app.paths.exe_dir, L"crash.log");
+    ::SetUnhandledExceptionFilter(crash_filter);
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);

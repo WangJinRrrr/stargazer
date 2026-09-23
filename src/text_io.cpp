@@ -52,7 +52,18 @@ bool read_file_utf8(const std::wstring& path, std::wstring& out) {
         static_cast<unsigned char>(buf[1]) == 0xBB && static_cast<unsigned char>(buf[2]) == 0xBF) {
         buf.erase(0, 3);  // 容忍用户用记事本加了 BOM
     }
-    out = utf8_to_wide(buf);
+    if (buf.empty()) {
+        out.clear();
+        return true;
+    }
+    // MB_ERR_INVALID_CHARS：非 UTF-8（例如记事本存成了 ANSI）必须报错。
+    // 否则非法字节会被静默替换成 U+FFFD，用户改一次就被写成乱码，永久损坏。
+    const int n = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, buf.data(),
+                                        static_cast<int>(buf.size()), nullptr, 0);
+    if (n <= 0) return false;
+    out.assign(static_cast<size_t>(n), L'\0');
+    ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, buf.data(), static_cast<int>(buf.size()),
+                          out.data(), n);
     return true;
 }
 
