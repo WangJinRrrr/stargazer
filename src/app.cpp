@@ -528,17 +528,14 @@ static void app_set_view(App& app, View v) {
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
-// Ctrl+1..3 / Ctrl+Tab。返回 true = 已被消费。
+// Ctrl+Tab：循环切视图。返回 true = 已被消费。
+// （Ctrl+1..9 不再是视图切换，已让给收纳盒的盒子切换 —— 见 box_keydown）
 static bool app_view_hotkey(App& app, UINT vk) {
-    // 用 GetAsyncKeyState 而不是 GetKeyState：后者是“队列同步态”，
-    // 快速按下 Ctrl+数字（连击很快）时可能还没反映出来，热键会时灵时不灵。
+    // 用 GetAsyncKeyState 而不是 GetKeyState：后者是“队列同步态”，快速按下时可能还没反映出来，
+    // 热键会时灵时不灵。
     if ((::GetAsyncKeyState(VK_CONTROL) & 0x8000) == 0) return false;
     if (vk == VK_TAB) {
         app_set_view(app, static_cast<View>((static_cast<int>(app.state.view) + 1) % kViewCount));
-        return true;
-    }
-    if (vk >= '1' && vk <= '3') {
-        app_set_view(app, static_cast<View>(vk - '1'));
         return true;
     }
     return false;

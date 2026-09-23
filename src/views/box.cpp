@@ -165,6 +165,23 @@ bool box_keydown(App& app, UINT vk) {
     const D2D1_SIZE_F client = app.render.client_logical();
     if (s.boxes.empty()) return false;
 
+    // Ctrl+1..9：切到第 N 个盒子（视图切换已改成 Ctrl+Tab，数字键让给盒子）。
+    // 超出盒子个数的数字也吃掉：免得落到别处去。
+    if (vk >= '1' && vk <= '9' && (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) {
+        const int want = vk - '1';
+        if (want < static_cast<int>(s.boxes.size())) {
+            s.box_view.edit.close();  // 改名框开着时先收掉：它只会叠在原来那一格上
+            s.box_view.box = want;
+            s.box_view.sel = -1;
+            s.box_view.hover = -1;
+            s.box_view.scroll = 0;
+            box_clamp(s, app.render.client_logical());
+            box_request_check(app);  // 与点标签同一规则：换盒子就重新校验存在性
+            ::InvalidateRect(app.panel, nullptr, FALSE);
+        }
+        return true;
+    }
+
     // Ctrl+Shift+D：清理本盒失效项（只删引用）。
     // 与待办清空已完成同一个键：Shift+Del 是彻底删，Ctrl+Shift 删是批量清理。
     // 修饰键用 GetAsyncKeyState：连击很快时 GetKeyState 的队列同步态可能还没更新。

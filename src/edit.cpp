@@ -19,10 +19,10 @@ LRESULT CALLBACK edit_subclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_P
 
     switch (msg) {
         case WM_KEYDOWN:
-            // 全局热键（Ctrl+1..3 切视图、Ctrl+Tab 轮换）不该被输入框吃掉：
-            // 待办的常驻输入框一进视图就抢焦点，不转发的话视图永远切不动。
+            // 面板层的组合键（Ctrl+Tab 切视图、收纳盒的 Ctrl+1..9 切盒子）
+            // 不该被输入框吃掉：待办的常驻输入框一进视图就抢焦点，不转发的话什么键都到不了面板。
             if ((::GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
-                ((wp >= '1' && wp <= '3') || wp == VK_TAB)) {
+                ((wp >= '1' && wp <= '9') || wp == VK_TAB)) {
                 if (e->parent) {
                     ::PostMessageW(e->parent, WM_KEYDOWN, wp, 0);
                     return 0;
