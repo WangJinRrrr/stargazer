@@ -314,24 +314,128 @@ static void test_new_folder_name() {
     CHECK(!sg::name_taken({ L"1" }, L"01"));
 }
 
+// Review Focus 2/5：类型判定、转义往返、稳定排序、副本归属
+static void test_todo_kind() {
+    CHECK(sg::todo_kind_from_text(L"https://example.com") == sg::TodoKind::Link);
+    CHECK(sg::todo_kind_from_text(L"  HTTP://EXAMPLE.COM  ") == sg::TodoKind::Link);  // 空白 + 大小写
+    CHECK(sg::todo_kind_from_text(L"http://") == sg::TodoKind::Link);
+    CHECK(sg::todo_kind_from_text(L"www.example.com") == sg::TodoKind::Text);  // 不是链接
+    CHECK(sg::todo_kind_from_text(L"ftp://x") == sg::TodoKind::Text);          // 不是链接
+    CHECK(sg::todo_kind_from_text(L"买牛奶\n第二行") == sg::TodoKind::Text);
+    CHECK(sg::todo_kind_from_text(L"") == sg::TodoKind::Text);
+
+    CHECK(sg::is_image_path(L"C:\\a\\b.PNG"));
+    CHECK(sg::is_image_path(L"D:/x/y.jpeg"));
+    CHECK(sg::is_image_path(L"shot.webp"));
+    CHECK(!sg::is_image_path(L"C:\\a\\b.txt"));
+    CHECK(!sg::is_image_path(L"C:\\a\\b"));    // 无扩展名
+    CHECK(!sg::is_image_path(L"C:\\pics\\"));  // 目录
+
+    // 未知 kind 值 → Text（宽松原则：不丢内容）
+    CHECK(sg::todo_kind_from_string(L"foo") == sg::TodoKind::Text);
+    CHECK(sg::todo_kind_from_string(L"image") == sg::TodoKind::Image);
+    CHECK_EQ(sg::todo_kind_to_string(sg::TodoKind::Link), std::wstring(L"link"));
+}
+
+static void test_todo_roundtrip() {
+    std::vector<sg::TodoItem> todos(3);
+    todos[0].id = 1; todos[0].created = 100; todos[0].kind = sg::TodoKind::Text;
+    todos[0].text = L"买牛奶 |t 与 |n 与 ||";  // 转义三件套
+    todos[1].id = 2; todos[1].created = 200; todos[1].kind = sg::TodoKind::Link;
+    todos[1].text = L"https://example.com/a?b=1";
+    todos[2].id = 3; todos[2].created = 300; todos[2].done = true;
+    todos[2].kind = sg::TodoKind::Image;
+    todos[2].attach = L"C:\\Users\\wjr\\AppData\\Local\\Temp\\sg\\images\\3.png";
+
+    int bad = 0;
+    auto back = sg::parse_todos(sg::serialize_todos(todos), bad);
+    CHECK_EQ(bad, 0);
+    CHECK_EQ(back.size(), size_t{3});
+    CHECK_EQ(back[0].text, std::wstring(L"买牛奶 |t 与 |n 与 ||"));
+    CHECK(back[1].kind == sg::TodoKind::Link);
+    CHECK(back[2].kind == sg::TodoKind::Image);
+    CHECK(back[2].done);
+    CHECK_EQ(back[2].attach, todos[2].attach);
+
+    // 空 kind + 空 text + 空 attach 的行 = 坏行（不产生幽灵条目）
+    // 注：parse_rows 每次调用会把 bad 重置为 0（既有 API 语义），所以这里每次用新的计数器
+    int bad_a = 0;
+    auto back2 = sg::parse_todos(L"9\t0\t1\t\t\t\n", bad_a);
+    CHECK_EQ(bad_a, 1);
+    CHECK_EQ(back2.size(), size_t{0});
+    // 字段数不对的行也是坏行
+    int bad_b = 0;
+    auto back3 = sg::parse_todos(L"9\t0\t1\ttext\n", bad_b);
+    CHECK_EQ(bad_b, 1);
+    CHECK_EQ(back3.size(), size_t{0});
+    // 非数字的 created（手改）→ 当作 0，不崩、不丢条目
+    int bad_c = 0;
+    auto back4 = sg::parse_todos(L"9\t0\tabc\ttext\t中文\t\n", bad_c);
+    CHECK_EQ(bad_c, 0);
+    CHECK_EQ(back4.size(), size_t{1});
+    CHECK_EQ(back4[0].created, 0LL);
+    CHECK_EQ(back4[0].text, std::wstring(L"中文"));
+}
+
+static void test_todo_sort() {
+    std::vector<sg::TodoItem> t(4);
+    t[0].id = 1; t[0].created = 100; t[0].text = L"old";
+    t[1].id = 2; t[1].created = 300; t[1].text = L"new";
+    t[2].id = 3; t[2].created = 200; t[2].text = L"mid";
+    t[3].id = 4; t[3].created = 999; t[3].done = true; t[3].text = L"done-newest";
+    sg::sort_todos(t);
+    CHECK_EQ(t[0].text, std::wstring(L"new"));
+    CHECK_EQ(t[1].text, std::wstring(L"mid"));
+    CHECK_EQ(t[2].text, std::wstring(L"old"));
+    CHECK_EQ(t[3].text, std::wstring(L"done-newest"));  // 已完成沉底，哪怕 created 最大
+
+    // 同一秒连记多条：id 大的在前（稳定，不随排序实现漂移）
+    std::vector<sg::TodoItem> same(3);
+    for (int i = 0; i < 3; ++i) { same[i].id = i + 1; same[i].created = 500; }
+    sg::sort_todos(same);
+    CHECK_EQ(same[0].id, 3);
+    CHECK_EQ(same[1].id, 2);
+    CHECK_EQ(same[2].id, 1);
+
+    std::vector<sg::TodoItem> empty;
+    sg::sort_todos(empty);  // 空列表不崩
+    CHECK_EQ(sg::next_todo_id(empty), 1LL);
+}
+
+// Review Focus 3：副本归属与“还有别的引用吗”
+static void test_todo_copy_ownership() {
+    const std::wstring images = L"D:\\Tools\\stargazer\\data\\images";
+    CHECK(sg::todo_is_owned_copy(images, L"D:\\Tools\\stargazer\\data\\images\\7.png"));
+    CHECK(sg::todo_is_owned_copy(images, L"d:\\tools\\stargazer\\DATA\\IMAGES\\7.png"));   // 大小写
+    CHECK(!sg::todo_is_owned_copy(images, L"D:\\Tools\\stargazer\\data\\images2\\7.png"));  // 前缀不算
+    CHECK(!sg::todo_is_owned_copy(images, L"D:\\Tools\\other\\7.png"));
+    CHECK(!sg::todo_is_owned_copy(images, L"D:\\Tools\\stargazer\\data\\images"));  // 目录本身
+    CHECK(!sg::todo_is_owned_copy(images, L""));
+
+    const std::wstring p = L"D:\\Tools\\stargazer\\data\\images\\7.png";
+    CHECK(sg::todo_copy_still_used({ p, L"C:\\other.png" }, p));  // 还有别人在用
+    CHECK(sg::todo_copy_still_used({ L"D:\\TOOLS\\STARGAZER\\DATA\\IMAGES\\7.PNG" }, p));  // 大小写
+    CHECK(!sg::todo_copy_still_used({ L"C:\\other.png" }, p));  // 没人用了
+    CHECK(!sg::todo_copy_still_used({}, p));
+}
+
 static void test_todos_roundtrip_and_sort() {
     std::vector<sg::TodoItem> todos;
-    todos.push_back({ 1, false, 100, 0, 0, L"普通" });
-    todos.push_back({ 2, false, 200, 0, 1, L"高优先级旧" });
-    todos.push_back({ 3, false, 300, 0, 1, L"高优先级新" });
-    todos.push_back({ 4, true, 400, 0, 1, L"已完成但高优先级" });
+    todos.push_back({ 1, false, 100, sg::TodoKind::Text, L"普通", L"" });
+    todos.push_back({ 2, false, 200, sg::TodoKind::Text, L"旧的", L"" });
+    todos.push_back({ 3, false, 300, sg::TodoKind::Text, L"新的", L"" });
+    todos.push_back({ 4, true, 400, sg::TodoKind::Text, L"已完成", L"" });
 
     int bad = 0;
     auto back = sg::parse_todos(sg::serialize_todos(todos), bad);
     CHECK_EQ(bad, 0);
     CHECK_EQ(back.size(), size_t{4});
-    CHECK_EQ(back[2].text, std::wstring(L"高优先级新"));
 
     sg::sort_todos(back);
-    CHECK_EQ(back[0].text, std::wstring(L"高优先级新"));
-    CHECK_EQ(back[1].text, std::wstring(L"高优先级旧"));
+    CHECK_EQ(back[0].text, std::wstring(L"新的"));
+    CHECK_EQ(back[1].text, std::wstring(L"旧的"));
     CHECK_EQ(back[2].text, std::wstring(L"普通"));
-    CHECK_EQ(back[3].text, std::wstring(L"已完成但高优先级"));
+    CHECK_EQ(back[3].text, std::wstring(L"已完成"));
     CHECK_EQ(back[3].done, true);
 
     CHECK_EQ(sg::next_todo_id(back), 5LL);
@@ -403,6 +507,10 @@ int main() {
     test_parent_path();
     test_new_folder_name();
     test_todos_roundtrip_and_sort();
+    test_todo_kind();
+    test_todo_roundtrip();
+    test_todo_sort();
+    test_todo_copy_ownership();
     test_config();
     test_premultiply_bgra();
 

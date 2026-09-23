@@ -92,12 +92,9 @@ static long long to_ll(const std::wstring& s) {
 std::wstring serialize_todos(const std::vector<TodoItem>& todos) {
     std::vector<std::vector<std::wstring>> rows;
     for (const auto& t : todos) {
-        rows.push_back({ std::to_wstring(t.id),
-                         t.done ? L"1" : L"0",
-                         std::to_wstring(t.created),
-                         std::to_wstring(t.due),
-                         std::to_wstring(t.prio),
-                         t.text });
+        rows.push_back({ std::to_wstring(t.id), t.done ? L"1" : L"0",
+                         std::to_wstring(t.created), todo_kind_to_string(t.kind), t.text,
+                         t.attach });
     }
     return build_text(rows);
 }
@@ -106,13 +103,18 @@ std::vector<TodoItem> parse_todos(const std::wstring& text, int& bad) {
     const auto rows = parse_rows(text, 6, bad);
     std::vector<TodoItem> todos;
     for (const auto& r : rows) {
+        // 空 kind + 空 text + 空 attach = 占位/坏行，不产生幽灵条目
+        if (r[3].empty() && r[4].empty() && r[5].empty()) {
+            ++bad;
+            continue;
+        }
         TodoItem t;
         t.id = to_ll(r[0]);
         t.done = (r[1] == L"1");
         t.created = to_ll(r[2]);
-        t.due = to_ll(r[3]);
-        t.prio = static_cast<int>(to_ll(r[4]));
-        t.text = r[5];
+        t.kind = todo_kind_from_string(r[3]);
+        t.text = r[4];
+        t.attach = r[5];
         todos.push_back(std::move(t));
     }
     return todos;
@@ -150,9 +152,9 @@ void config_set(Config& kv, const std::wstring& key, const std::wstring& value) 
 
 void sort_todos(std::vector<TodoItem>& todos) {
     std::stable_sort(todos.begin(), todos.end(), [](const TodoItem& a, const TodoItem& b) {
-        if (a.done != b.done) return !a.done;          // 未完成在前
-        if (a.prio != b.prio) return a.prio > b.prio;  // 高优先级在前
-        return a.created > b.created;                  // 新的在前
+        if (a.done != b.done) return !a.done;  // 未完成在前
+        if (a.created != b.created) return a.created > b.created;  // 新的在前
+        return a.id > b.id;  // 同一秒连记多条：id 大的在前（不随排序实现漂移）
     });
 }
 

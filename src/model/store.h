@@ -4,6 +4,8 @@
 #include <utility>
 #include <vector>
 
+#include "model/todo_kind.h"
+
 namespace sg {
 
 struct BoxItem {
@@ -22,9 +24,11 @@ struct TodoItem {
     long long id = 0;
     bool done = false;
     long long created = 0;  // Unix 秒
-    long long due = 0;      // 0 = 未设置
-    int prio = 0;           // 0 普通，1 高
-    std::wstring text;
+    TodoKind kind = TodoKind::Text;
+    std::wstring text;    // 文字内容；link 时是 URL；image 时可为空
+    std::wstring attach;  // image 时的图片来源路径，其余为空
+    // 失效标记（仅 image 的引用型用）：运行期状态，由存在性校验回填，**不参与序列化**
+    bool missing = false;
 };
 
 using Config = std::vector<std::pair<std::wstring, std::wstring>>;
@@ -48,6 +52,7 @@ bool box_move_item(std::vector<Box>& boxes, int src_box, int index, int dst_box)
 bool box_name_taken(const std::vector<Box>& boxes, const std::wstring& name, int except_index);
 
 // 行格式：id \t done \t created \t due \t prio \t text
+// 行格式：id \t done \t created \t kind \t text \t attach
 std::wstring serialize_todos(const std::vector<TodoItem>& todos);
 std::vector<TodoItem> parse_todos(const std::wstring& text, int& bad);
 

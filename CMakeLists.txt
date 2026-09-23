@@ -18,6 +18,7 @@ set(MODEL_SOURCES
   src/model/search.cpp
   src/model/store.cpp
   src/model/dirlist.cpp
+  src/model/todo_kind.cpp
   src/model/bgra.cpp
 )
 
