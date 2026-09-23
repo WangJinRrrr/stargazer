@@ -1,9 +1,11 @@
 #include <windows.h>
+#include <shlobj.h>
 
 #include <cstdio>
 #include <string>
 
 #include "model/paths.h"
+#include "launch.h"
 #include "persist.h"
 #include "text_io.h"
 
@@ -13,6 +15,16 @@ static int g_failed = 0;
     do {                                                                   \
         if (!(cond)) {                                                     \
             std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);     \
+            ++g_failed;                                                    \
+        }                                                                  \
+    } while (0)
+
+#define CHECK_EQ(a, b)                                                     \
+    do {                                                                   \
+        auto _a = (a);                                                     \
+        auto _b = (b);                                                     \
+        if (!(_a == _b)) {                                                 \
+            std::printf("FAIL %s:%d  %s != %s\n", __FILE__, __LINE__, #a, #b); \
             ++g_failed;                                                    \
         }                                                                  \
     } while (0)
@@ -71,16 +83,46 @@ static void test_atomic_write_leaves_no_tmp() {
     ::DeleteFileW(file.c_str());
 }
 
+// .lnk 解析：真正造一个快捷方式再解析回来（拖入 .lnk 是主要添加方式，不能只靠手工验）
+static void test_resolve_lnk() {
+    IShellLinkW* link = nullptr;
+    CHECK(SUCCEEDED(::CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                       IID_PPV_ARGS(&link))));
+    if (!link) return;
+    link->SetPath(L"C:\\Windows\\notepad.exe");
+    link->SetArguments(L"--flag value");
+
+    const std::wstring lnk = sg::join_path(temp_dir(), L"t.lnk");
+    IPersistFile* file = nullptr;
+    CHECK(SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&file))));
+    if (file) {
+        CHECK(SUCCEEDED(file->Save(lnk.c_str(), TRUE)));
+        file->Release();
+    }
+    link->Release();
+
+    const sg::LaunchItem item = sg::item_from_path(lnk);
+    CHECK_EQ(item.target, std::wstring(L"C:\\Windows\\notepad.exe"));
+    CHECK_EQ(item.args, std::wstring(L"--flag value"));
+    CHECK_EQ(item.name, std::wstring(L"t.lnk"));  // 名字暂用快捷方式文件名，用户可改名
+
+    ::DeleteFileW(lnk.c_str());
+}
+
 int main() {
+    ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     test_roundtrip_utf8();
     test_read_missing_file();
     test_dir_writable_probe();
     test_atomic_write_leaves_no_tmp();
+    test_resolve_lnk();
 
     if (g_failed == 0) {
         std::printf("OK: test_io 全部通过\n");
+        ::CoUninitialize();
         return 0;
     }
     std::printf("FAILED: %d 项检查未通过\n", g_failed);
+    ::CoUninitialize();
     return 1;
 }

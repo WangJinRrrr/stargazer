@@ -3,9 +3,12 @@
 #include <shellapi.h>
 #include <wchar.h>
 
+#include <algorithm>
 #include <string>
 
 #include "icons.h"
+#include "dragdrop.h"
+#include "launch.h"
 #include "model/paths.h"
 #include "text_io.h"
 
@@ -13,6 +16,8 @@ namespace sg {
 
 const wchar_t* kCtlClass = L"StargazerCtl";
 const wchar_t* kPanelClass = L"StargazerWnd";
+
+static void launch_selected(App& app);  // 定义在下方，先声明（双击与 Enter 都要用）
 
 namespace {
 
@@ -103,9 +108,20 @@ bool ensure_panel(App& app) {
                                   WS_POPUP, 0, 0, w, h, nullptr, nullptr, app.inst, &app);
     if (!app.panel) return false;
 
-    RECT rc{};
-    ::GetWindowRect(app.panel, &rc);
     app.render.init(app.panel);  // 内部会取 GetDpiForWindow，与上面 dpi 一致
+
+    // 拖放注册在面板窗口上（用户是往面板上拖），面板是懒创建的，所以注册也在这里
+    dragdrop_set_drag_flag(&app.in_drag);
+    dragdrop_init(app.panel);
+    dragdrop_set_hook([&app](const std::vector<std::wstring>& paths) {
+        AppState& s = app.state;
+        if (s.groups.empty()) s.groups.push_back(LaunchGroup{ L"常用", {} });
+        const int gi = std::clamp(s.launcher.group, 0, static_cast<int>(s.groups.size()) - 1);
+        for (const auto& p : paths) s.groups[gi].items.push_back(item_from_path(p));
+        s.data_dirty = true;
+        launcher_refilter(s);
+        ::InvalidateRect(app.panel, nullptr, FALSE);
+    });
     return true;
 }
 
@@ -219,6 +235,19 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        case WM_LBUTTONDBLCLK: {
+            // 双击启动（CS_DBLCLKS 已开启，系统保证只有快速双击才发这条消息）
+            if (!app) return 0;
+            const D2D1_POINT_2F lpt =
+                app->render.to_logical(POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
+            const int hit =
+                launcher_hittest(app->state, app->render.client_logical(), lpt);
+            if (hit >= 0) {
+                app->state.launcher.sel = hit;
+                launch_selected(*app);
+            }
+            return 0;
+        }
         case WM_COMMAND:
             // 边打字边过滤：EDIT 每次内容变化都会给父窗口发 EN_CHANGE，
             // 只连 Enter/失焦的提交是不够的（那样只在提交时才过滤）。
@@ -245,6 +274,10 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!app) return 0;
             if (wp == VK_ESCAPE) {
                 app_hide(*app);
+                return 0;
+            }
+            if (wp == VK_RETURN) {
+                if (app->state.launcher.sel >= 0) launch_selected(*app);
                 return 0;
             }
             const D2D1_SIZE_F cs = app->render.client_logical();
@@ -328,6 +361,20 @@ void app_save_if_dirty(App& app) {
         ::MessageBoxW(app.ctl, L"保存失败：程序目录可能已变为不可写。", L"Stargazer",
                       MB_ICONWARNING);
     }
+}
+
+// 启动当前选中的条目，然后隐藏面板。失败用弹框告知（启动是用户主动发起的，静默失败更糟）
+static void launch_selected(App& app) {
+    LauncherState& ls = app.state.launcher;
+    if (ls.sel < 0 || ls.sel >= static_cast<int>(ls.filtered.size())) return;
+    if (app.state.groups.empty()) return;
+    const LaunchItem& item = app.state.groups[ls.group].items[ls.filtered[ls.sel]];
+    std::wstring err;
+    if (!launch_item(item, &err)) {
+        ::MessageBoxW(app.panel, err.c_str(), L"Stargazer", MB_ICONWARNING);
+        return;
+    }
+    app_hide(app);
 }
 
 void app_show(App& app) {

@@ -5,7 +5,8 @@
 
 namespace sg {
 
-// 字段内转义：'\\' -> "\\\\"，'\t' -> "\\t"，'\n' -> "\\n"，'\r' 丢弃
+// 字段内转义：'|' -> "||"，'\t' -> "|t"，'\n' -> "|n"，'\r' 丢弃
+// 转义符选 '|' 是因为 Windows 路径里不允许出现它，手写路径因此从不需要转义。
 std::wstring escape_field(const std::wstring& v);
 std::wstring unescape_field(const std::wstring& v);
 

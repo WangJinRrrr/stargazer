@@ -28,7 +28,7 @@ static int g_failed = 0;
         }                                                                  \
     } while (0)
 
-// Review Focus 3：含制表符、换行、反斜杠字面量、emoji、中文的文件名必须逐字节还原
+// Review Focus 3：含制表符、换行、反斜杠、emoji、中文的文件名必须逐字节还原
 static void test_field_roundtrip() {
     const std::wstring cases[] = {
         L"",
@@ -36,14 +36,36 @@ static void test_field_roundtrip() {
         L"C:\\Users\\wjr\\文档\\a b.txt",
         L"含\t制表符",
         L"含\n换行",
-        L"含\\反斜杠",
-        L"\\t 字面量（反斜杠加字母 t，共两字符）",
+        L"含|竖线",
+        L"|t 字面量（竖线加字母 t）",
         L"emoji \U0001F600 混合 CJK",
-        L"末尾单个反斜杠\\",
+        L"末尾单个竖线|",
     };
     for (const auto& c : cases) {
         CHECK_EQ(sg::unescape_field(sg::escape_field(c)), c);
     }
+}
+
+// 回归：Windows 路径里的 \n / \t 不能被当成转义序列。
+// 这是用反斜杠做转义符时的真 bug：C:\\new -> "C:" + 换行 + "ew"。
+static void test_windows_paths_need_no_escaping() {
+    const std::wstring paths[] = {
+        L"C:\\Windows\\notepad.exe",   // 含 \n（from \notepad）
+        L"C:\\temp\\a.txt",            // 含 \t
+        L"D:\\new folder",              // 含 \n
+        L"D:\\tools\\bin",              // 含 \t
+        L"\\\\server\\share\\x",         // UNC
+    };
+    for (const auto& p : paths) {
+        CHECK_EQ(sg::escape_field(p), p);  // 路径不需要任何转义
+        CHECK_EQ(sg::unescape_field(p), p);
+    }
+
+    // 整行层面也要保证：写进去再读回来，路径一字不差
+    std::vector<std::wstring> row = { L"常用", L"记事本", L"C:\\Windows\\notepad.exe", L"", L"", L"" };
+    std::vector<std::wstring> back;
+    CHECK(sg::split_row(sg::join_row(row), 6, back));
+    CHECK_EQ(back[2], std::wstring(L"C:\\Windows\\notepad.exe"));
 }
 
 static void test_row_roundtrip() {
@@ -234,6 +256,7 @@ static void test_premultiply_bgra() {
 
 int main() {
     test_field_roundtrip();
+    test_windows_paths_need_no_escaping();
     test_row_roundtrip();
     test_bad_row_skipped();
     test_empty_fields_and_crlf();

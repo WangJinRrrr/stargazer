@@ -2,14 +2,16 @@
 
 namespace sg {
 
+// 转义符用 '|' 而不是反斜杠：Windows 路径里不允许出现 '|'，所以手写路径几乎从不需要转义；
+// 反斜杠在路径里无处不在，用它做转义符会让 C:\new（含 \n）与 C:\temp（含 \t）直接写坏。
 std::wstring escape_field(const std::wstring& v) {
     std::wstring out;
     out.reserve(v.size() + 8);
     for (wchar_t c : v) {
         switch (c) {
-            case L'\\': out += L"\\\\"; break;
-            case L'\t': out += L"\\t"; break;
-            case L'\n': out += L"\\n"; break;
+            case L'|': out += L"||"; break;
+            case L'\t': out += L"|t"; break;
+            case L'\n': out += L"|n"; break;
             case L'\r': break;  // 换行统一为 \n
             default: out += c; break;
         }
@@ -21,12 +23,12 @@ std::wstring unescape_field(const std::wstring& v) {
     std::wstring out;
     out.reserve(v.size());
     for (size_t i = 0; i < v.size(); ++i) {
-        if (v[i] == L'\\' && i + 1 < v.size()) {
+        if (v[i] == L'|' && i + 1 < v.size()) {
             const wchar_t n = v[i + 1];
-            if (n == L'\\') { out += L'\\'; ++i; continue; }
+            if (n == L'|') { out += L'|'; ++i; continue; }
             if (n == L't') { out += L'\t'; ++i; continue; }
             if (n == L'n') { out += L'\n'; ++i; continue; }
-            // 其它 "\x" 原样保留（保证手改文件不会被吞字符）
+            // 其它 "|x" 原样保留（手改文件不会被吞字符）
         }
         out += v[i];
     }
