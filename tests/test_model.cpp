@@ -2,7 +2,9 @@
 #include <string>
 #include <vector>
 
+#include "model/paths.h"
 #include "model/rowformat.h"
+#include "model/search.h"
 
 static int g_failed = 0;
 
@@ -77,12 +79,58 @@ static void test_build_text() {
     CHECK_EQ(sg::build_text(rows), std::wstring(L"a\tb\nc\t\n"));
 }
 
+static void test_normalize_key() {
+    CHECK_EQ(sg::normalize_key(L"C:\\A\\B\\"), std::wstring(L"c:\\a\\b"));
+    CHECK_EQ(sg::normalize_key(L"C:/A/B"), std::wstring(L"c:\\a\\b"));
+    CHECK_EQ(sg::normalize_key(L"C:\\\\A\\\\\\B"), std::wstring(L"c:\\a\\b"));
+    CHECK_EQ(sg::normalize_key(L"C:\\"), std::wstring(L"c:\\"));
+    CHECK_EQ(sg::normalize_key(L"D:\\网盘\\电影\\"), std::wstring(L"d:\\网盘\\电影"));
+    CHECK_EQ(sg::normalize_key(L"\\\\server\\share\\x"), std::wstring(L"\\\\server\\share\\x"));
+}
+
+static void test_file_name_and_ext() {
+    CHECK_EQ(sg::file_name(L"C:\\a\\b\\c.txt"), std::wstring(L"c.txt"));
+    CHECK_EQ(sg::file_name(L"C:\\a\\b\\"), std::wstring(L""));
+    CHECK_EQ(sg::file_name(L"c.txt"), std::wstring(L"c.txt"));
+    CHECK_EQ(sg::extension_of(L"C:\\a\\B.TXT"), std::wstring(L".txt"));
+    CHECK_EQ(sg::extension_of(L"C:\\a\\无扩展名"), std::wstring(L""));
+    CHECK_EQ(sg::extension_of(L"C:\\a\\.gitignore"), std::wstring(L""));
+}
+
+static void test_join_path() {
+    CHECK_EQ(sg::join_path(L"C:\\a", L"b.txt"), std::wstring(L"C:\\a\\b.txt"));
+    CHECK_EQ(sg::join_path(L"C:\\a\\", L"b.txt"), std::wstring(L"C:\\a\\b.txt"));
+}
+
+static void test_contains_ci() {
+    CHECK(sg::contains_ci(L"C:\\Program Files\\Notepad++.exe", L"notepad"));
+    CHECK(sg::contains_ci(L"网盘备份目录", L"备份"));
+    CHECK(sg::contains_ci(L"abc", L""));
+    CHECK(!sg::contains_ci(L"abc", L"abcd"));
+}
+
+static void test_natural_compare() {
+    CHECK(sg::natural_compare(L"1.txt", L"2.txt") < 0);
+    CHECK(sg::natural_compare(L"2.txt", L"10.txt") < 0);
+    CHECK(sg::natural_compare(L"a2.txt", L"a10.txt") < 0);
+    CHECK(sg::natural_compare(L"a007.txt", L"a7.txt") == 0);
+    CHECK(sg::natural_compare(L"ABC", L"abc") == 0);
+    CHECK(sg::natural_compare(L"a", L"a1") < 0);
+    // 同一批文件名排序必须是确定的全序（不允许出现 a<b 且 b<a）
+    CHECK(sg::natural_compare(L"x", L"x") == 0);
+}
+
 int main() {
     test_field_roundtrip();
     test_row_roundtrip();
     test_bad_row_skipped();
     test_empty_fields_and_crlf();
     test_build_text();
+    test_normalize_key();
+    test_file_name_and_ext();
+    test_join_path();
+    test_contains_ci();
+    test_natural_compare();
 
     if (g_failed == 0) {
         std::printf("OK: test_model 全部通过\n");

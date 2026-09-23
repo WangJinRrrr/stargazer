@@ -14,6 +14,8 @@ add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 
 set(MODEL_SOURCES
   src/model/rowformat.cpp
+  src/model/paths.cpp
+  src/model/search.cpp
 )
 
 add_executable(test_model tests/test_model.cpp ${MODEL_SOURCES})
