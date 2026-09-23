@@ -5,6 +5,7 @@
 #include "model/paths.h"
 #include "model/rowformat.h"
 #include "model/search.h"
+#include "model/store.h"
 
 static int g_failed = 0;
 
@@ -120,6 +121,88 @@ static void test_natural_compare() {
     CHECK(sg::natural_compare(L"x", L"x") == 0);
 }
 
+// Review Focus 2：混入坏行后其余记录照常加载
+static void test_launcher_roundtrip_and_bad_line() {
+    std::vector<sg::LaunchGroup> groups(2);
+    groups[0].name = L"常用";
+    groups[0].items.push_back({ L"记事本", L"C:\\Windows\\notepad.exe", L"", L"", L"" });
+    groups[0].items.push_back({ L"带\t制表符的名字", L"D:\\a\\b.lnk", L"--x \"y z\"", L"D:\\a", L"D:\\ico.ico" });
+    groups[1].name = L"网盘";
+    groups[1].items.push_back({ L"", L"", L"", L"", L"" });  // 全空字段必须能往返
+
+    int bad = 0;
+    auto back = sg::parse_launcher(sg::serialize_launcher(groups), bad);
+    CHECK_EQ(bad, 0);
+    CHECK_EQ(back.size(), size_t{2});
+    CHECK_EQ(back[0].name, std::wstring(L"常用"));
+    CHECK_EQ(back[0].items.size(), size_t{2});
+    CHECK_EQ(back[0].items[1].name, std::wstring(L"带\t制表符的名字"));
+    CHECK_EQ(back[0].items[1].args, std::wstring(L"--x \"y z\""));
+    CHECK_EQ(back[1].items[0].target, std::wstring(L""));
+
+    // 手工插一行字段数不对的
+    const std::wstring broken = sg::serialize_launcher(groups) + L"少\t字段\n";
+    auto back2 = sg::parse_launcher(broken, bad);
+    CHECK_EQ(bad, 1);
+    CHECK_EQ(back2.size(), size_t{2});          // 坏行不产生记录，分组数不变
+    CHECK_EQ(back2[0].items.size(), size_t{2});  // 原条目一个不少
+    CHECK_EQ(back2[1].items.size(), size_t{1});
+}
+
+static void test_boxes_roundtrip() {
+    std::vector<sg::Box> boxes(1);
+    boxes[0].name = L"待归档";
+    boxes[0].items.push_back({ L"文档", L"D:\\网盘\\文档\\" });
+    boxes[0].items.push_back({ L"含\n换行", L"D:\\a\\b" });
+
+    int bad = 0;
+    auto back = sg::parse_boxes(sg::serialize_boxes(boxes), bad);
+    CHECK_EQ(bad, 0);
+    CHECK_EQ(back.size(), size_t{1});
+    CHECK_EQ(back[0].items.size(), size_t{2});
+    CHECK_EQ(back[0].items[0].path, std::wstring(L"D:\\网盘\\文档\\"));
+    CHECK_EQ(back[0].items[1].name, std::wstring(L"含\n换行"));
+}
+
+static void test_todos_roundtrip_and_sort() {
+    std::vector<sg::TodoItem> todos;
+    todos.push_back({ 1, false, 100, 0, 0, L"普通" });
+    todos.push_back({ 2, false, 200, 0, 1, L"高优先级旧" });
+    todos.push_back({ 3, false, 300, 0, 1, L"高优先级新" });
+    todos.push_back({ 4, true, 400, 0, 1, L"已完成但高优先级" });
+
+    int bad = 0;
+    auto back = sg::parse_todos(sg::serialize_todos(todos), bad);
+    CHECK_EQ(bad, 0);
+    CHECK_EQ(back.size(), size_t{4});
+    CHECK_EQ(back[2].text, std::wstring(L"高优先级新"));
+
+    sg::sort_todos(back);
+    CHECK_EQ(back[0].text, std::wstring(L"高优先级新"));
+    CHECK_EQ(back[1].text, std::wstring(L"高优先级旧"));
+    CHECK_EQ(back[2].text, std::wstring(L"普通"));
+    CHECK_EQ(back[3].text, std::wstring(L"已完成但高优先级"));
+    CHECK_EQ(back[3].done, true);
+
+    CHECK_EQ(sg::next_todo_id(back), 5LL);
+    CHECK_EQ(sg::next_todo_id(std::vector<sg::TodoItem>{}), 1LL);
+}
+
+static void test_config() {
+    std::vector<std::pair<std::wstring, std::wstring>> kv;
+    sg::config_set(kv, L"hotkey", L"Ctrl+Shift+Space");
+    sg::config_set(kv, L"hotkey", L"Alt+Space");  // 覆盖而非追加
+    CHECK_EQ(kv.size(), size_t{1});
+    CHECK_EQ(sg::config_get(kv, L"hotkey", L""), std::wstring(L"Alt+Space"));
+    CHECK_EQ(sg::config_get(kv, L"missing", L"默认值"), std::wstring(L"默认值"));
+
+    int bad = 0;
+    auto back = sg::parse_config(sg::serialize_config(kv), bad);
+    CHECK_EQ(bad, 0);
+    CHECK_EQ(back.size(), size_t{1});
+    CHECK_EQ(sg::config_get(back, L"hotkey", L""), std::wstring(L"Alt+Space"));
+}
+
 int main() {
     test_field_roundtrip();
     test_row_roundtrip();
@@ -131,6 +214,10 @@ int main() {
     test_join_path();
     test_contains_ci();
     test_natural_compare();
+    test_launcher_roundtrip_and_bad_line();
+    test_boxes_roundtrip();
+    test_todos_roundtrip_and_sort();
+    test_config();
 
     if (g_failed == 0) {
         std::printf("OK: test_model 全部通过\n");

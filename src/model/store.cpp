@@ -1,0 +1,139 @@
+#include "model/store.h"
+
+#include <algorithm>
+#include <cwchar>
+
+#include "model/rowformat.h"
+
+namespace sg {
+
+std::wstring serialize_launcher(const std::vector<LaunchGroup>& groups) {
+    std::vector<std::vector<std::wstring>> rows;
+    for (const auto& g : groups) {
+        for (const auto& it : g.items) {
+            rows.push_back({ g.name, it.name, it.target, it.args, it.workdir, it.icon });
+        }
+    }
+    return build_text(rows);
+}
+
+std::vector<LaunchGroup> parse_launcher(const std::wstring& text, int& bad) {
+    const auto rows = parse_rows(text, 6, bad);
+    std::vector<LaunchGroup> groups;
+    for (const auto& r : rows) {
+        auto g = std::find_if(groups.begin(), groups.end(),
+                              [&](const LaunchGroup& x) { return x.name == r[0]; });
+        if (g == groups.end()) {
+            groups.push_back(LaunchGroup{ r[0], {} });
+            g = groups.end() - 1;
+        }
+        g->items.push_back(LaunchItem{ r[1], r[2], r[3], r[4], r[5] });
+    }
+    return groups;
+}
+
+std::wstring serialize_boxes(const std::vector<Box>& boxes) {
+    std::vector<std::vector<std::wstring>> rows;
+    for (const auto& b : boxes) {
+        for (const auto& it : b.items) {
+            rows.push_back({ b.name, it.name, it.path });
+        }
+    }
+    return build_text(rows);
+}
+
+std::vector<Box> parse_boxes(const std::wstring& text, int& bad) {
+    const auto rows = parse_rows(text, 3, bad);
+    std::vector<Box> boxes;
+    for (const auto& r : rows) {
+        auto b = std::find_if(boxes.begin(), boxes.end(),
+                              [&](const Box& x) { return x.name == r[0]; });
+        if (b == boxes.end()) {
+            boxes.push_back(Box{ r[0], {} });
+            b = boxes.end() - 1;
+        }
+        b->items.push_back(BoxItem{ r[1], r[2] });
+    }
+    return boxes;
+}
+
+static long long to_ll(const std::wstring& s) {
+    return static_cast<long long>(std::wcstoll(s.c_str(), nullptr, 10));
+}
+
+std::wstring serialize_todos(const std::vector<TodoItem>& todos) {
+    std::vector<std::vector<std::wstring>> rows;
+    for (const auto& t : todos) {
+        rows.push_back({ std::to_wstring(t.id),
+                         t.done ? L"1" : L"0",
+                         std::to_wstring(t.created),
+                         std::to_wstring(t.due),
+                         std::to_wstring(t.prio),
+                         t.text });
+    }
+    return build_text(rows);
+}
+
+std::vector<TodoItem> parse_todos(const std::wstring& text, int& bad) {
+    const auto rows = parse_rows(text, 6, bad);
+    std::vector<TodoItem> todos;
+    for (const auto& r : rows) {
+        TodoItem t;
+        t.id = to_ll(r[0]);
+        t.done = (r[1] == L"1");
+        t.created = to_ll(r[2]);
+        t.due = to_ll(r[3]);
+        t.prio = static_cast<int>(to_ll(r[4]));
+        t.text = r[5];
+        todos.push_back(std::move(t));
+    }
+    return todos;
+}
+
+std::wstring serialize_config(const Config& kv) {
+    std::vector<std::vector<std::wstring>> rows;
+    for (const auto& p : kv) rows.push_back({ p.first, p.second });
+    return build_text(rows);
+}
+
+Config parse_config(const std::wstring& text, int& bad) {
+    const auto rows = parse_rows(text, 2, bad);
+    Config kv;
+    for (const auto& r : rows) kv.emplace_back(r[0], r[1]);
+    return kv;
+}
+
+std::wstring config_get(const Config& kv, const std::wstring& key, const std::wstring& def) {
+    for (const auto& p : kv) {
+        if (p.first == key) return p.second;
+    }
+    return def;
+}
+
+void config_set(Config& kv, const std::wstring& key, const std::wstring& value) {
+    for (auto& p : kv) {
+        if (p.first == key) {
+            p.second = value;
+            return;
+        }
+    }
+    kv.emplace_back(key, value);
+}
+
+void sort_todos(std::vector<TodoItem>& todos) {
+    std::stable_sort(todos.begin(), todos.end(), [](const TodoItem& a, const TodoItem& b) {
+        if (a.done != b.done) return !a.done;          // 未完成在前
+        if (a.prio != b.prio) return a.prio > b.prio;  // 高优先级在前
+        return a.created > b.created;                  // 新的在前
+    });
+}
+
+long long next_todo_id(const std::vector<TodoItem>& todos) {
+    long long max_id = 0;
+    for (const auto& t : todos) {
+        if (t.id > max_id) max_id = t.id;
+    }
+    return max_id + 1;
+}
+
+}  // namespace sg

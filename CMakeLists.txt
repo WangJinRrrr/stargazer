@@ -16,6 +16,7 @@ set(MODEL_SOURCES
   src/model/rowformat.cpp
   src/model/paths.cpp
   src/model/search.cpp
+  src/model/store.cpp
 )
 
 add_executable(test_model tests/test_model.cpp ${MODEL_SOURCES})
