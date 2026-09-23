@@ -1,10 +1,12 @@
 #include <windows.h>
+#include <shellapi.h>  // DragQueryFileW
 #include <shlobj.h>
 
 #include <cstdio>
 #include <string>
 
 #include "model/paths.h"
+#include "dragdrop.h"
 #include "launch.h"
 #include "persist.h"
 #include "text_io.h"
@@ -109,6 +111,55 @@ static void test_resolve_lnk() {
     ::DeleteFileW(lnk.c_str());
 }
 
+// CF_HDROP 构造：与资源管理器互通的关键格式，最容易错的是结尾的 NUL 数量、
+// fWide 与 pFiles 偏移 —— 所以这里逐项断言，而不是“能粘进去就算过”。
+static void test_make_hdrop() {
+    const std::vector<std::wstring> paths = {
+        L"C:\\Windows\\notepad.exe",
+        L"D:\\\u7f51\u76d8\\\u6587\u6863\\",  // 中文 + 尾反斜杠（目录）
+        L"C:\\Users\\wjr\\My Docs\\a b.txt",
+    };
+    HGLOBAL h = sg::make_hdrop(paths);
+    CHECK(h != nullptr);
+    if (!h) return;
+
+    auto* df = static_cast<DROPFILES*>(::GlobalLock(h));
+    CHECK(df != nullptr);
+    if (!df) {
+        ::GlobalFree(h);
+        return;
+    }
+    CHECK_EQ(df->pFiles, static_cast<DWORD>(sizeof(DROPFILES)));  // 偏移必须是头大小
+    CHECK(df->fWide != FALSE);                                    // 必须是宽字符
+
+    // 用系统 API 读回（比手算偏移可靠）
+    const HDROP drop = static_cast<HDROP>(h);
+    const UINT count = ::DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    CHECK_EQ(static_cast<size_t>(count), paths.size());
+    for (UINT i = 0; i < count && i < paths.size(); ++i) {
+        const UINT len = ::DragQueryFileW(drop, i, nullptr, 0);
+        std::wstring got(len + 1, L'\0');
+        ::DragQueryFileW(drop, i, got.data(), len + 1);
+        got.resize(len);
+        CHECK_EQ(got, paths[i]);
+    }
+
+    // 结尾必须是双 NUL：最后一条路径的终止 NUL + 额外的收尾 NUL
+    const auto* p =
+        reinterpret_cast<const wchar_t*>(reinterpret_cast<const BYTE*>(df) + df->pFiles);
+    size_t content = 0;
+    for (const auto& s : paths) content += s.size() + 1;  // 每条路径各带一个 NUL
+    CHECK_EQ(p[content - 1], L'\0');  // 最后一条路径的终止符
+    CHECK_EQ(p[content], L'\0');      // 额外的收尾 NUL（双 NUL）
+    // 第一个双 NUL 必须正好出现在这里，不能提前（否则中间会出现空路径条目）
+    size_t n = 0;
+    while (p[n] != L'\0' || p[n + 1] != L'\0') ++n;
+    CHECK_EQ(n, content - 1);
+
+    ::GlobalUnlock(h);
+    ::GlobalFree(h);
+}
+
 int main() {
     ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     test_roundtrip_utf8();
@@ -116,6 +167,7 @@ int main() {
     test_dir_writable_probe();
     test_atomic_write_leaves_no_tmp();
     test_resolve_lnk();
+    test_make_hdrop();
 
     if (g_failed == 0) {
         std::printf("OK: test_io 全部通过\n");

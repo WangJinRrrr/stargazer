@@ -8,6 +8,11 @@
 
 namespace sg {
 
+// 构造 CF_HDROP（全局内存），返回 HDROP；失败返回 nullptr。
+// 调用方在 DoDragDrop / SetClipboardData 之后不要再碰它（所有权已转移）。
+// 路径必须是绝对路径：这是与资源管理器互通的格式。
+HGLOBAL make_hdrop(const std::vector<std::wstring>& paths);
+
 bool dragdrop_init(HWND hwnd);
 void dragdrop_shutdown(HWND hwnd);
 

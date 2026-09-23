@@ -469,11 +469,19 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         case WM_LBUTTONDBLCLK: {
-            // 双击启动（CS_DBLCLKS 已开启，系统保证只有快速双击才发这条消息）
+            // 双击启动/打开（CS_DBLCLKS 已开启，系统保证只有快速双击才发这条消息）
             if (!app) return 0;
-            if (app->state.view != View::Launcher) return 0;
             const D2D1_POINT_2F lpt =
                 app->render.to_logical(POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
+            if (app->state.view == View::Box) {
+                const int bhit = box_hittest(*app, lpt);
+                if (bhit >= 0) {
+                    app->state.box_view.sel = bhit;
+                    box_open_selected(*app);
+                }
+                return 0;
+            }
+            if (app->state.view != View::Launcher) return 0;
             const int hit =
                 launcher_hittest(app->state, app->render.client_logical(), lpt);
             if (hit >= 0) {
@@ -494,7 +502,6 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_CONTEXTMENU: {
             if (!app) return 0;
-            if (app->state.view != View::Launcher) return 0;
             POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             if (pt.x == -1 && pt.y == -1) {  // 键盘唤出菜单
                 RECT rc{};
@@ -504,7 +511,12 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             POINT client = pt;
             ::ScreenToClient(hwnd, &client);
-            launcher_context_menu(*app, pt, client);
+            // 菜单按当前视图分发（与启动板菜单同一入口）
+            if (app->state.view == View::Box) {
+                box_context_menu(*app, pt, client);
+            } else if (app->state.view == View::Launcher) {
+                launcher_context_menu(*app, pt, client);
+            }
             return 0;
         }
         case WM_CHAR: {

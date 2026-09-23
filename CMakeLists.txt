@@ -25,7 +25,7 @@ target_include_directories(test_model PRIVATE src)
 
 add_executable(test_io tests/test_io.cpp
   src/text_io.cpp src/persist.cpp src/model/paths.cpp src/model/rowformat.cpp
-  src/launch.cpp)
+  src/launch.cpp src/dragdrop.cpp)
 target_include_directories(test_io PRIVATE src)
 target_link_libraries(test_io PRIVATE shell32 ole32 advapi32)
 

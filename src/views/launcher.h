@@ -52,5 +52,9 @@ void launcher_context_menu(App& app, POINT screen_pt, POINT client_pt);
 void launcher_begin_rename(App& app, D2D1_SIZE_F client);
 // 新建条目：两步输入（先名称，回车后再输目标）
 void launcher_begin_new_item(App& app, D2D1_SIZE_F client);
+// 重命名当前分组（阶段 1 账本里欠的两项，本阶段补齐）：输入框叠在分组标签上
+void launcher_rename_group(App& app, D2D1_SIZE_F client);
+// 删除当前分组：非空先问一次，删后把 group 夹紧
+void launcher_delete_group(App& app);
 
 }  // namespace sg

@@ -227,6 +227,77 @@ void launcher_move_item_to_group(AppState& s, int filtered_index, int group_inde
     launcher_refilter(s);
 }
 
+void launcher_rename_group(App& app, D2D1_SIZE_F client) {
+    AppState& s = app.state;
+    LauncherState& ls = s.launcher;
+    if (s.groups.empty()) return;
+    const int gi = std::clamp(ls.group, 0, static_cast<int>(s.groups.size()) - 1);
+
+    // 标签矩形：与渲染共用 tab_width 的累加
+    const D2D1_RECT_F tr = launcher_tabs_rect(client);
+    D2D1_RECT_F target = tr;
+    float x = tr.left;
+    for (int i = 0; i < static_cast<int>(s.groups.size()); ++i) {
+        const float w = tab_width(s.groups[i].name);
+        if (i == gi) {
+            target = D2D1::RectF(x, tr.top, x + w, tr.bottom);
+            break;
+        }
+        x += w + 6.f;
+    }
+    const RECT rc = app.render.to_physical(target);
+    const std::wstring current = s.groups[gi].name;
+    ls.search.open(
+        app.panel, rc, current, app.render.dpi,
+        [&app, gi](const std::wstring& t) {
+            AppState& st = app.state;
+            if (!t.empty() && gi < static_cast<int>(st.groups.size())) {
+                // 重名分组在 parse 时会被合并（数据层语义），所以拒绝重名
+                bool dup = false;
+                for (size_t i = 0; i < st.groups.size(); ++i) {
+                    if (static_cast<int>(i) != gi && st.groups[i].name == t) dup = true;
+                }
+                if (!dup) {
+                    st.groups[gi].name = t;
+                    st.data_dirty = true;
+                }
+            }
+            launcher_refilter(st);
+            // 改名框占用的是搜索框那个 InlineEdit，用完得把搜索框还回来
+            launcher_sync_search(st, app.panel, app.render.client_logical(), app.render);
+            ::InvalidateRect(app.panel, nullptr, FALSE);
+        },
+        [&app]() {
+            launcher_sync_search(app.state, app.panel, app.render.client_logical(), app.render);
+        });
+}
+
+void launcher_delete_group(App& app) {
+    AppState& s = app.state;
+    if (s.groups.empty()) return;
+    const int gi = std::clamp(s.launcher.group, 0, static_cast<int>(s.groups.size()) - 1);
+
+    const size_t n = s.groups[gi].items.size();
+    if (n > 0) {
+        const std::wstring msg = L"删除分组“" + s.groups[gi].name + L"”？\n\n" +
+                                 std::to_wstring(n) +
+                                 L" 个条目会被移除（只删快捷方式条目，磁盘上的文件不受影响）。";
+        if (::MessageBoxW(app.panel, msg.c_str(), L"Stargazer",
+                          MB_YESNO | MB_ICONQUESTION) != IDYES) {
+            return;
+        }
+    }
+    s.groups.erase(s.groups.begin() + gi);
+    s.data_dirty = true;
+    // 删到空了就补一个空分组：界面不能一个分组标签都没有
+    if (s.groups.empty()) s.groups.push_back(LaunchGroup{ L"常用", {} });
+    s.launcher.group = std::clamp(gi, 0, static_cast<int>(s.groups.size()) - 1);
+    s.launcher.sel = -1;
+    s.launcher.scroll = 0;
+    launcher_refilter(s);
+    ::InvalidateRect(app.panel, nullptr, FALSE);
+}
+
 void launcher_context_menu(App& app, POINT screen_pt, POINT client_pt) {
     AppState& s = app.state;
     const int hit = launcher_hittest(s, app.render.client_logical(),
@@ -236,6 +307,8 @@ void launcher_context_menu(App& app, POINT screen_pt, POINT client_pt) {
     HMENU menu = ::CreatePopupMenu();
     ::AppendMenuW(menu, MF_STRING, 1, L"新建条目(&N)");
     ::AppendMenuW(menu, MF_STRING, 2, L"新建分组(&G)");
+    ::AppendMenuW(menu, MF_STRING, 6, L"重命名分组(&P)");
+    ::AppendMenuW(menu, MF_STRING, 7, L"删除分组(&T)");
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING | (hit >= 0 ? MF_ENABLED : MF_GRAYED), 3, L"重命名(&R)");
     ::AppendMenuW(menu, MF_STRING | (hit >= 0 ? MF_ENABLED : MF_GRAYED), 4, L"删除(&D)");
@@ -269,6 +342,12 @@ void launcher_context_menu(App& app, POINT screen_pt, POINT client_pt) {
                                     SW_SHOWNORMAL);
                 }
             }
+            break;
+        case 6:
+            launcher_rename_group(app, app.render.client_logical());
+            break;
+        case 7:
+            launcher_delete_group(app);
             break;
         default:
             break;

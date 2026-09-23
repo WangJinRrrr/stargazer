@@ -2,6 +2,7 @@
 
 #include <ole2.h>
 #include <shellapi.h>
+#include <shlobj.h>  // DROPFILES（定义在 shlobj_core.h）
 
 namespace sg {
 namespace {
@@ -81,6 +82,36 @@ private:
 DropTarget* g_target = nullptr;
 
 }  // namespace
+
+HGLOBAL make_hdrop(const std::vector<std::wstring>& paths) {
+    if (paths.empty()) return nullptr;
+
+    // 布局：DROPFILES 头 + 每条路径（各自以 \0 结尾）+ 末尾再一个 \0（双 NUL 收尾）
+    size_t chars = 1;  // 末尾的额外 NUL
+    for (const auto& p : paths) chars += p.size() + 1;
+    const SIZE_T bytes = sizeof(DROPFILES) + chars * sizeof(wchar_t);
+
+    HGLOBAL h = ::GlobalAlloc(GHND, bytes);  // GHND = 固定内存 + 自动清零
+    if (!h) return nullptr;
+    auto* df = static_cast<DROPFILES*>(::GlobalLock(h));
+    if (!df) {
+        ::GlobalFree(h);
+        return nullptr;
+    }
+    df->pFiles = sizeof(DROPFILES);
+    df->fWide = TRUE;  // 宽字符：中文路径全靠它
+
+    auto* dst = reinterpret_cast<wchar_t*>(reinterpret_cast<BYTE*>(df) + sizeof(DROPFILES));
+    for (const auto& p : paths) {
+        ::memcpy(dst, p.c_str(), p.size() * sizeof(wchar_t));
+        dst += p.size();
+        *dst++ = L'\0';
+    }
+    *dst = L'\0';
+
+    ::GlobalUnlock(h);
+    return h;
+}
 
 bool dragdrop_init(HWND hwnd) {
     if (g_target) return true;

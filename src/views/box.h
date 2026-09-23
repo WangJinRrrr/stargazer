@@ -35,4 +35,16 @@ void box_request_check(App& app);
 // 清理当前盒子里的失效条目（只删引用，**绝不碰磁盘**）
 void box_clear_missing(App& app);
 
+// --- 条目与盒子管理（都只动引用，永不碰磁盘上的文件）---
+void box_delete_selected(App& app);
+void box_rename_selected(App& app);
+void box_add_box(App& app);
+void box_rename_box(App& app, int index);
+void box_delete_box(App& app, int index);
+void box_copy_selected(App& app);  // Ctrl+C：同时给 CF_HDROP 与 CF_UNICODETEXT
+void box_open_selected(App& app);
+
+// 右键菜单：命中用客户区坐标（逻辑 DIP），弹菜单用屏幕坐标
+void box_context_menu(App& app, POINT screen_pt, POINT client_pt);
+
 }  // namespace sg
