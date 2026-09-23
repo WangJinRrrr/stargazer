@@ -9,6 +9,7 @@
 #include "app.h"
 #include "clipboard.h"
 #include "icons.h"
+#include "images.h"
 #include "model/paths.h"
 
 namespace sg {
@@ -120,24 +121,34 @@ void draw_row(App& app, int index, const D2D1_RECT_F& row) {
     const D2D1_RECT_F lab = D2D1::RectF(content_x, row.top, row.right - 6.f, row.bottom);
 
     if (item.kind == TodoKind::Image) {
-        // 缩略图框：Task 7 用系统缩略图，之前先用图标/色块占位
+        // 缩略图框：系统缩略图（工作线程取、UI 建位图）；未到位时先画占位色块
         const D2D1_RECT_F thumb = D2D1::RectF(content_x, row.top + 4.f, content_x + kTodoThumbW,
                                              row.top + 4.f + kTodoThumbH);
-        if (ID2D1Bitmap* bmp = icons_get(r, item.attach, false)) {
-            r.rt->DrawBitmap(bmp, thumb, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        if (ID2D1Bitmap* bmp = images_get(r, item.attach)) {
+            const D2D1_SIZE_F sz = bmp->GetSize();
+            if (sz.width > 0.f && sz.height > 0.f) {
+                const float scale = std::min(kTodoThumbW / sz.width, kTodoThumbH / sz.height);
+                const float w = sz.width * scale;
+                const float h = sz.height * scale;
+                const float x = thumb.left + (kTodoThumbW - w) / 2.f;
+                const float y = thumb.top + (kTodoThumbH - h) / 2.f;
+                r.rt->DrawBitmap(bmp, D2D1::RectF(x, y, x + w, y + h), 1.f,
+                                 D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            }
         } else {
             r.fill_round_rect(thumb, 8.f, ext_color(item.attach));
         }
+        // 名字画在缩略图**右侧**：图片行只有 96 高，88 高的缩略图加留白已没地方再放一行字
         const std::wstring label = item.text.empty() ? file_name(item.attach) : item.text;
-        const D2D1_RECT_F caption =
-            D2D1::RectF(content_x, thumb.bottom + 2.f, row.right - 6.f, row.bottom);
-        r.text(caption, label, r.format(11.f), item.missing ? r.theme.text_dim : text_color);
+        const D2D1_RECT_F name =
+            D2D1::RectF(thumb.right + 10.f, row.top + 6.f, row.right - 6.f, row.top + 28.f);
+        r.text(name, label, r.format(11.f), item.missing ? r.theme.text_dim : text_color);
         if (item.missing) {
             // 引用型图片被外部改名/删除：灰显 + 删除线 + 说明
-            const float mid = (caption.top + caption.bottom) / 2.f;
-            r.fill_rect(D2D1::RectF(caption.left, mid - 0.5f, caption.right, mid + 0.5f),
+            const float mid = (name.top + name.bottom) / 2.f;
+            r.fill_rect(D2D1::RectF(name.left, mid - 0.5f, name.right, mid + 0.5f),
                         r.theme.text_dim);
-            r.text(D2D1::RectF(thumb.right + 8.f, row.top + 4.f, row.right - 6.f, row.top + 24.f),
+            r.text(D2D1::RectF(thumb.right + 10.f, row.top + 30.f, row.right - 6.f, row.top + 52.f),
                    L"图片已不存在", r.format(11.f), r.theme.text_dim);
         }
     } else if (item.kind == TodoKind::Link) {

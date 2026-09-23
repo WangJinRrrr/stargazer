@@ -25,6 +25,8 @@ constexpr UINT WM_APP_FS_CHECKED = WM_APP + 4;
 constexpr UINT WM_APP_DIR_LOADED = WM_APP + 5;
 // 文件操作（改名/新建/删除/粘贴）完成
 constexpr UINT WM_APP_FS_OP_DONE = WM_APP + 6;
+// 缩略图工作线程取到一张图（待办图片预览）
+constexpr UINT WM_APP_IMAGE_READY = WM_APP + 7;
 
 struct App {
     HINSTANCE inst = nullptr;
@@ -61,5 +63,8 @@ void app_toggle(App& app);
 void app_shutdown(App& app);
 // 非致命提示（托盘气泡）。视图层用它报错，不弹模态框（spec §12）
 void app_notify(App& app, const std::wstring& text);
+// 投递一次存在性校验：当前盒子的条目 + 待办里的引用型图片。
+// 结果按 path 一次回填 boxes 与 todos（fs_work 的回调是单槽设计，不能变成两个消费者）。
+void app_request_fs_checks(App& app);
 
 }  // namespace sg

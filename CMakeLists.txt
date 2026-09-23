@@ -41,6 +41,7 @@ set(SG_SOURCES
   src/text_io.cpp
   src/persist.cpp
   src/icons.cpp
+  src/images.cpp
   src/fs_work.cpp
   src/edit.cpp
   src/clipboard.cpp

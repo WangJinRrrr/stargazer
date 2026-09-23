@@ -179,21 +179,9 @@ bool box_keydown(App& app, UINT vk) {
 }
 
 void box_request_check(App& app) {
-    AppState& s = app.state;
-    if (s.view != View::Box || s.boxes.empty()) return;
-    std::vector<std::wstring> paths;
-    paths.reserve(s.boxes[s.box_view.box].items.size());
-    for (const auto& it : s.boxes[s.box_view.box].items) paths.push_back(it.path);
-    if (paths.empty()) return;
-    // 结果回来时用户可能已经换盒或删了条目，所以**只按 path 回填，不按索引**。
-    // 在所有盒子里找同一个 path：同一文件可以同时存在于多个盒子（合法用法）。
-    fs_check_paths(paths, [&app](const std::wstring& path, bool exists) {
-        for (auto& b : app.state.boxes) {
-            for (auto& it : b.items) {
-                if (it.path == path) it.missing = !exists;
-            }
-        }
-    });
+    // 存在性校验已提升到 app 层：一次投递（盒子 + 待办的引用图片）并只在那里设回调，
+    // 避免 fs_work 的单槽回调被两个消费者互相覆盖。
+    app_request_fs_checks(app);
 }
 
 void box_delete_selected(App& app) {

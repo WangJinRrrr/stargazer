@@ -10,6 +10,7 @@
 #include "clipboard.h"
 #include "dragdrop.h"
 #include "fs_work.h"
+#include "images.h"
 #include "model/paths.h"
 #include "text_io.h"
 #include "views/box.h"
@@ -250,6 +251,7 @@ static void app_set_view(App& app, View v) {
     if (v == View::Todo) {
         todo_rebuild_layout(s, app.render.client_logical());
         todo_sync_input(app);
+        app_request_fs_checks(app);  // 引用型图片的存在性校验（与盒子共用同一个回调）
     }
     if (v == View::Browse) {
         browse_activate(app);
@@ -293,6 +295,10 @@ LRESULT CALLBACK ctl_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_APP_ICON_READY:
             // 图标工作线程的通知窗口是 ctl，重绘目标是面板
+            if (app && app->panel) ::InvalidateRect(app->panel, nullptr, FALSE);
+            return 0;
+        case WM_APP_IMAGE_READY:
+            // 缩略图线程同理
             if (app && app->panel) ::InvalidateRect(app->panel, nullptr, FALSE);
             return 0;
         case WM_APP_FS_CHECKED:
@@ -810,6 +816,34 @@ void app_notify(App& app, const std::wstring& text) {
     tray_balloon(app, L"Stargazer", text);
 }
 
+void app_request_fs_checks(App& app) {
+    AppState& s = app.state;
+    std::vector<std::wstring> paths;
+    if (!s.boxes.empty()) {
+        const int bi = std::clamp(s.box_view.box, 0, static_cast<int>(s.boxes.size()) - 1);
+        for (const auto& it : s.boxes[static_cast<size_t>(bi)].items) {
+            if (!it.path.empty()) paths.push_back(it.path);
+        }
+    }
+    for (const auto& t : s.todos) {
+        if (!t.attach.empty()) paths.push_back(t.attach);
+    }
+    if (paths.empty()) return;
+    // 回填按 path，不按索引：投递与结果之间用户可能删条目/换盒子。
+    // 回调只在这里设置一次（fs_work 是单消费者设计，别变成两个消费者）。
+    fs_check_paths(paths, [&app](const std::wstring& path, bool exists) {
+        AppState& st = app.state;
+        for (auto& b : st.boxes) {
+            for (auto& it : b.items) {
+                if (it.path == path) it.missing = !exists;
+            }
+        }
+        for (auto& t : st.todos) {
+            if (!t.attach.empty() && t.attach == path) t.missing = !exists;
+        }
+    });
+}
+
 void app_save_ui(App& app) {
     if (!app.panel) return;
     // 尺寸存逻辑像素：这样换到不同缩放的显示器上尺寸语义不变
@@ -849,6 +883,7 @@ void app_show(App& app) {
     ::SetForegroundWindow(app.panel);
     // 窗口现在才真正落在某块显示器上，此时取 DPI 才准（含跨显示器不同缩放）
     app.render.sync_dpi();
+    images_forget_failures();  // 每次呼出重新给取不到缩略图的条目一次机会
 
     // 每次呼出都从干净状态开始：选中态归位（输入框在下面按视图处理）
     AppState& s = app.state;
@@ -867,6 +902,7 @@ void app_show(App& app) {
         todo_rebuild_layout(s, app.render.client_logical());
         todo_sync_input(app);
         s.todo.input.focus();
+        app_request_fs_checks(app);  // 呼出时校验待办里的引用型图片
     } else {
         ::SetFocus(app.panel);  // 其他视图自己收键盘
     }
@@ -885,6 +921,7 @@ void app_hide(App& app) {
     // 复用设备丢失那条路径，下次 begin() 会自动重建。
     app.render.release_surfaces();
     icons_on_device_lost();
+    images_on_device_lost();
 
     // 再把常驻页赶回系统。实测：D2D/DWrite 首次绘制后常驻工作集 54MB，
     // 而裁剪后再次呼出只需要 17MB — 差的那些是字体/字形/命令缓冲缓存，
