@@ -5,6 +5,7 @@
 #include <string>
 
 #include "app.h"
+#include "fs_work.h"
 #include "icons.h"
 
 namespace {
@@ -56,6 +57,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     }
 
     sg::icons_init(app.ctl);
+    sg::fs_init(app.ctl);
 
     // 先读数据：app_show 要用已加载的分组与 ui.txt 里的窗口尺寸
     sg::app_load(app);
@@ -69,6 +71,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     }
 
     sg::icons_shutdown();
+    sg::fs_shutdown();
     sg::app_save_if_dirty(app);
     sg::app_save_ui(app);
     sg::app_shutdown(app);

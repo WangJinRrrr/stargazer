@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "app.h"
+#include "fs_work.h"
 
 namespace sg {
 
@@ -122,6 +123,15 @@ bool box_keydown(App& app, UINT vk) {
     AppState& s = app.state;
     const D2D1_SIZE_F client = app.render.client_logical();
     if (s.boxes.empty()) return false;
+
+    // Ctrl+Shift+Delete：清理本盒失效项（只删引用）。
+    // 修饰键用 GetAsyncKeyState：连击很快时 GetKeyState 的队列同步态可能还没更新
+    if (vk == VK_DELETE && (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 &&
+        (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0) {
+        box_clear_missing(app);
+        return true;
+    }
+
     const int count = static_cast<int>(s.boxes[s.box_view.box].items.size());
     if (!grid_keydown(box_layout(client), count, s.box_view.sel, s.box_view.scroll, vk)) {
         return false;
@@ -129,6 +139,39 @@ bool box_keydown(App& app, UINT vk) {
     box_clamp(s, client);
     ::InvalidateRect(app.panel, nullptr, FALSE);
     return true;
+}
+
+void box_request_check(App& app) {
+    AppState& s = app.state;
+    if (s.view != View::Box || s.boxes.empty()) return;
+    std::vector<std::wstring> paths;
+    paths.reserve(s.boxes[s.box_view.box].items.size());
+    for (const auto& it : s.boxes[s.box_view.box].items) paths.push_back(it.path);
+    if (paths.empty()) return;
+    // 结果回来时用户可能已经换盒或删了条目，所以**只按 path 回填，不按索引**。
+    // 在所有盒子里找同一个 path：同一文件可以同时存在于多个盒子（合法用法）。
+    fs_check_paths(paths, [&app](const std::wstring& path, bool exists) {
+        for (auto& b : app.state.boxes) {
+            for (auto& it : b.items) {
+                if (it.path == path) it.missing = !exists;
+            }
+        }
+    });
+}
+
+void box_clear_missing(App& app) {
+    AppState& s = app.state;
+    if (s.boxes.empty()) return;
+    auto& items = s.boxes[s.box_view.box].items;
+    const size_t before = items.size();
+    // 只从数据里删引用：磁盘上的文件一个也不动
+    items.erase(std::remove_if(items.begin(), items.end(),
+                               [](const BoxItem& it) { return it.missing; }),
+                items.end());
+    if (items.size() != before) s.data_dirty = true;
+    s.box_view.sel = -1;
+    box_clamp(s, app.render.client_logical());
+    ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
 }  // namespace sg

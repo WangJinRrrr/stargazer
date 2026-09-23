@@ -8,6 +8,7 @@
 
 #include "icons.h"
 #include "dragdrop.h"
+#include "fs_work.h"
 #include "launch.h"
 #include "model/paths.h"
 #include "text_io.h"
@@ -193,6 +194,7 @@ static void app_set_view(App& app, View v) {
         s.box_view.scroll = 0;
         box_clamp(s, app.render.client_logical());
         ::SetFocus(app.panel);  // 网格视图自己收键盘，不需要子控件
+        box_request_check(app);  // 切进来也要校验，否则失效标记是上一次的
     }
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
@@ -200,7 +202,9 @@ static void app_set_view(App& app, View v) {
 // Ctrl+1..4 / Ctrl+Tab。返回 true = 已被消费。
 // 面板与搜索框（子 EDIT 吃掉按键）两处都要调，否则输入框在焦点上时热键失灵。
 static bool app_view_hotkey(App& app, UINT vk) {
-    if ((::GetKeyState(VK_CONTROL) & 0x8000) == 0) return false;
+    // 用 GetAsyncKeyState 而不是 GetKeyState：后者是“队列同步态”，
+    // 快速按下 Ctrl+数字（连击很快）时可能还没反映出来，热键会时灵时不灵。
+    if ((::GetAsyncKeyState(VK_CONTROL) & 0x8000) == 0) return false;
     if (vk == VK_TAB) {
         app_set_view(app, static_cast<View>((static_cast<int>(app.state.view) + 1) % kViewCount));
         return true;
@@ -233,6 +237,13 @@ LRESULT CALLBACK ctl_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_APP_ICON_READY:
             // 图标工作线程的通知窗口是 ctl，重绘目标是面板
             if (app && app->panel) ::InvalidateRect(app->panel, nullptr, FALSE);
+            return 0;
+        case WM_APP_FS_CHECKED:
+            // 存在性校验结果：在 UI 线程按 path 回填 missing 再重绘（灰显 + 删除线）
+            if (app && app->panel) {
+                fs_drain();
+                ::InvalidateRect(app->panel, nullptr, FALSE);
+            }
             return 0;
         case WM_CLOSE:
             ::DestroyWindow(hwnd);
@@ -735,6 +746,8 @@ void app_show(App& app) {
         s.box_view.scroll = 0;
         box_clamp(s, app.render.client_logical());
         ::SetFocus(app.panel);
+        // 呼出时校验当前盒子（只校验当前盒子：大盒子全量校验会拖慢呼出）
+        box_request_check(app);
     }
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }

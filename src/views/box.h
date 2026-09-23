@@ -30,4 +30,9 @@ void box_render(App& app);
 // 返回 true 表示按键已被消费
 bool box_keydown(App& app, UINT vk);
 
+// 呼出时投递当前盒子的存在性校验（工作线程 B）；结果在 UI 线程按 path 回填
+void box_request_check(App& app);
+// 清理当前盒子里的失效条目（只删引用，**绝不碰磁盘**）
+void box_clear_missing(App& app);
+
 }  // namespace sg

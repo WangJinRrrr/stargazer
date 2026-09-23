@@ -20,6 +20,8 @@ extern const wchar_t* kPanelClass;
 constexpr UINT WM_APP_SHOW = WM_APP + 1;
 constexpr UINT WM_APP_TRAY = WM_APP + 2;
 constexpr UINT WM_APP_ICON_READY = WM_APP + 3;
+// 文件系统工作线程（线程 B）完成一批存在性校验
+constexpr UINT WM_APP_FS_CHECKED = WM_APP + 4;
 
 struct App {
     HINSTANCE inst = nullptr;
