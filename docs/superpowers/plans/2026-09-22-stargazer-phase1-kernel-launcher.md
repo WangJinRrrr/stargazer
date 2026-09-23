@@ -13,6 +13,23 @@
 ## Global Constraints
 
 - C++20；MSVC v143；CMake ≥ 3.20；`/W4 /utf-8 /permissive-`；Release `/O2`
+
+> **本机工具链（2026-09-22 实测确认）**：本机没有 v143，也没有独立的 cmake，但 D 盘已有 VS 18 Community，足够使用。
+> 因此计划里所有 `-G "Visual Studio 17 2022"` 一律替换为 `-G "Visual Studio 18 2026"`，其余命令（含 `--config Release`、`--target`）原样不变。
+> ```
+> CMAKE  = D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe
+> VCVARS = D:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat
+> ```
+> cmake 不在 PATH 上，用绝对路径。已实测 `cl /W4 /EHsc /std:c++20 /MT` 能编出调用 D2D1CreateFactory +
+> DWriteCreateFactory + CreateTextFormat(L"Microsoft YaHei UI") 的程序，三个 HRESULT 均为 S_OK。
+>
+> **另一件必须做的事**：VS 18 没有在 VS Installer 里注册，`vswhere -all` 查不到实例，因此 CMake 的 VS 生成器
+> 默认枚举不到它，报 `could not find any instance of Visual Studio`。每次 configure 必须显式指定实例（版本号必须是 4 段）：
+> ```
+> "$CMAKE" -S . -B build -G "Visual Studio 18 2026" -A x64 `
+>   "-DCMAKE_GENERATOR_INSTANCE=D:\Program Files\Microsoft Visual Studio\18\Community,version=18.0.0.0"
+> ```
+> 只有 `-S/-B` 的 configure 需要它；`cmake --build build --config Release --target X` 不需要。
 - **静态 CRT**：`set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")`——便携的前提
 - **零第三方依赖**：只允许链接 `d2d1 dwrite shell32 ole32 shlwapi comctl32 dwmapi`
 - **`src/model/` 下任何文件不得 `#include <windows.h>` 或任何 Windows 头**，只用 STL（这条使数据层可被控制台测试）
