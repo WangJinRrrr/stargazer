@@ -26,3 +26,16 @@ add_executable(test_io tests/test_io.cpp
   src/text_io.cpp src/persist.cpp src/model/paths.cpp)
 target_include_directories(test_io PRIVATE src)
 target_link_libraries(test_io PRIVATE shell32 ole32 advapi32)
+
+set(SG_SOURCES
+  src/main.cpp
+  src/app.cpp
+  src/text_io.cpp
+  src/persist.cpp
+)
+
+add_executable(stargazer WIN32 ${SG_SOURCES} ${MODEL_SOURCES})
+target_include_directories(stargazer PRIVATE src)
+target_compile_options(stargazer PRIVATE /O2)
+target_link_libraries(stargazer PRIVATE
+  d2d1 dwrite shell32 ole32 shlwapi comctl32 dwmapi user32 gdi32)

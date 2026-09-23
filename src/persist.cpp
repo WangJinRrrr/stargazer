@@ -66,6 +66,13 @@ std::wstring data_file(const Paths& p, const wchar_t* name) {
     return join_path(p.data_dir, name);
 }
 
+std::wstring exe_path() {
+    wchar_t buf[MAX_PATH] = {};
+    const DWORD n = ::GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return std::wstring();
+    return buf;
+}
+
 bool save_text(const Paths& p, const wchar_t* name, const std::wstring& text) {
     return write_file_utf8_atomic(data_file(p, name), text);
 }

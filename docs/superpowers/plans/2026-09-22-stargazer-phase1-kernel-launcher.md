@@ -1677,12 +1677,6 @@ LRESULT CALLBACK app_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_APP_TRAY:
             if (app) on_tray(*app, lp);
             return 0;
-        case WM_ACTIVATE:
-            // Review Focus：拖放期间失焦不能隐藏，否则刚拖起的项会随着窗口一起消失
-            if (app && LOWORD(wp) == WA_INACTIVE && !app->in_drag && ::IsWindowVisible(hwnd)) {
-                app_hide(*app);
-            }
-            return 0;
         case WM_HOTKEY:
             if (app && wp == app->hotkey_id) app_toggle(*app);
             return 0;
@@ -1872,7 +1866,7 @@ cmake --build build --config Release --target stargazer
 
 1. 双击 `stargazer.exe`，窗口出现在鼠标所在显示器中央，深灰背景，无边框。
 2. 任务栏和 Alt+Tab 里**没有**它（`WS_EX_TOOLWINDOW` 生效）。
-3. 切到别的窗口（点击记事本），它自动消失。
+3. 切到别的窗口（点击记事本），它**不**消失（已取消失焦即隐藏）；按 `Esc` 才消失。从桌面按住一个文件拖过来时窗口始终在（这是取消失焦隐藏的真正原因）。
 4. `Ctrl+Shift+Space` 能反复呼出/隐藏。
 5. `Esc` 隐藏。
 6. 托盘右键菜单可呼出、可勾选/取消"开机自启"（勾选后开 regedit 确认 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下有 `stargazer` 值）。
@@ -2868,7 +2862,7 @@ cmake --build build --config Release --target stargazer
 4. `Esc` 取消：标题栏不变。
 5. 输入到一半点击窗口其它位置：内容被提交（失焦即提交），输入框消失。
 6. `Ctrl+A` 全选、`Ctrl+C`/`Ctrl+V` 可用。
-7. 呼出时窗口失焦（切换到记事本）：输入框随窗口一起隐藏，无残留的悬空输入框。
+7. 点击窗口外再点回来：输入框在失焦时已提交并消失（不残留悬空 EDIT），窗口本身仍在（不做失焦隐藏）。
 
 - [ ] **Step 5: 提交**
 
@@ -3802,7 +3796,7 @@ cmake --build build --config Release --target stargazer
 2. 从资源管理器多选几个文件拖入：条数正确。
 3. `↓` 选中后 `Enter`：程序启动，窗口隐藏；启动失败时看到警告。
 4. 双击条目启动。
-5. 拖入过程中窗口失去焦点不隐藏（在拖拽悬停阶段切到别的窗口看）——`in_drag` 生效。
+5. 拖入过程中窗口始终可见（已取消失焦隐藏）；拖拽悬停在窗口上时格子不高亮（`in_drag` 抑制悬停更新）。
 6. 拖一个不存在的路径（比如断开的网盘快捷方式）进来：不崩溃，条目存在且双击后报错。
 
 - [ ] **Step 5: 提交**

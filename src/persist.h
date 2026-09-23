@@ -20,6 +20,9 @@ std::wstring data_file(const Paths& p, const wchar_t* name);
 bool save_text(const Paths& p, const wchar_t* name, const std::wstring& text);
 bool load_text(const Paths& p, const wchar_t* name, std::wstring& out);
 
+// 当前进程 exe 的绝对路径；失败返回空
+std::wstring exe_path();
+
 // HKCU\...\Run 的 stargazer 值
 bool autostart_enabled();
 bool autostart_set(bool enabled, const std::wstring& exe_path);
