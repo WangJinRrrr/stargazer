@@ -33,7 +33,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     // Review Focus 5：已有实例时唤出它并退出自己，绝不启动第二个进程
     HANDLE once = ::CreateMutexW(nullptr, TRUE, L"Local\\stargazer-singleton");
     if (once && ::GetLastError() == ERROR_ALREADY_EXISTS) {
-        if (HWND existing = ::FindWindowW(sg::kWindowClass, nullptr)) {
+        // 找控制窗口而不是面板：面板可能还没建（懒加载）
+        if (HWND existing = ::FindWindowW(sg::kCtlClass, nullptr)) {
             ::PostMessageW(existing, sg::WM_APP_SHOW, 0, 0);
         }
         ::CloseHandle(once);
@@ -53,7 +54,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     // 开机自启时只驻留托盘，不弹窗、不抢焦点
     if (!has_autostart_flag()) sg::app_show(app);
 
-    sg::icons_init(app.hwnd);
+    sg::icons_init(app.ctl);
 
     MSG msg{};
     while (::GetMessageW(&msg, nullptr, 0, 0) > 0) {

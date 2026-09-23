@@ -91,6 +91,8 @@ void Renderer::end() {
     }
 }
 
+void Renderer::release_surfaces() { discard_device_resources(); }
+
 IDWriteTextFormat* Renderer::format(float size, DWRITE_FONT_WEIGHT weight,
                                     DWRITE_TEXT_ALIGNMENT align) {
     wchar_t key[64] = {};

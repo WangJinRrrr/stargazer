@@ -10,7 +10,8 @@
 
 namespace sg {
 
-const wchar_t* kWindowClass = L"StargazerWnd";
+const wchar_t* kCtlClass = L"StargazerCtl";
+const wchar_t* kPanelClass = L"StargazerWnd";
 
 namespace {
 
@@ -25,7 +26,7 @@ const int kDefaultH = 620;
 void add_tray_icon(App& app) {
     NOTIFYICONDATAW nid{};
     nid.cbSize = sizeof(nid);
-    nid.hWnd = app.hwnd;
+    nid.hWnd = app.ctl;
     nid.uID = kTrayId;
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_APP_TRAY;
@@ -37,13 +38,13 @@ void add_tray_icon(App& app) {
 void remove_tray_icon(App& app) {
     NOTIFYICONDATAW nid{};
     nid.cbSize = sizeof(nid);
-    nid.hWnd = app.hwnd;
+    nid.hWnd = app.ctl;
     nid.uID = kTrayId;
     ::Shell_NotifyIconW(NIM_DELETE, &nid);
 }
 
 void show_tray_menu(App& app) {
-    ::SetForegroundWindow(app.hwnd);  // 否则菜单不会因失焦而关闭
+    ::SetForegroundWindow(app.ctl);  // 否则菜单不会因失焦而关闭
 
     HMENU menu = ::CreatePopupMenu();
     ::AppendMenuW(menu, MF_STRING, 1, L"呼出 (&S)");
@@ -58,7 +59,7 @@ void show_tray_menu(App& app) {
     ::GetCursorPos(&pt);
     // 自启状态每次从注册表读，config.txt 不存（注册表是唯一真相）
     const UINT cmd = ::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0,
-                                      app.hwnd, nullptr);
+                                      app.ctl, nullptr);
     ::DestroyMenu(menu);
 
     switch (cmd) {
@@ -69,7 +70,7 @@ void show_tray_menu(App& app) {
             autostart_set(!autostart_enabled(), exe_path());
             break;
         case 3:
-            ::PostMessageW(app.hwnd, WM_CLOSE, 0, 0);
+            ::PostMessageW(app.ctl, WM_CLOSE, 0, 0);
             break;
         default:
             break;
@@ -89,39 +90,25 @@ void on_tray(App& app, LPARAM lp) {
     }
 }
 
-}  // namespace
+// 面板窗口首次呼出时才创建；WM_CREATE 里初始化渲染器
+bool ensure_panel(App& app) {
+    if (app.panel) return true;
 
-void app_show(App& app) {
-    POINT pt{};
-    ::GetCursorPos(&pt);
-    const HMONITOR mon = ::MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO mi{};
-    mi.cbSize = sizeof(mi);
-    ::GetMonitorInfoW(mon, &mi);
+    const int dpi = static_cast<int>(::GetDpiForSystem());
+    const int w = ::MulDiv(kDefaultW, dpi, 96);
+    const int h = ::MulDiv(kDefaultH, dpi, 96);
+
+    app.panel = ::CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kPanelClass, L"Stargazer",
+                                  WS_POPUP, 0, 0, w, h, nullptr, nullptr, app.inst, &app);
+    if (!app.panel) return false;
 
     RECT rc{};
-    ::GetWindowRect(app.hwnd, &rc);
-    const int w = rc.right - rc.left;
-    const int h = rc.bottom - rc.top;
-    const int x = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - w) / 2;
-    const int y = mi.rcWork.top + ((mi.rcWork.bottom - mi.rcWork.top) - h) / 2;
-
-    ::SetWindowPos(app.hwnd, HWND_TOPMOST, x, y, w, h, SWP_SHOWWINDOW);
-    ::SetForegroundWindow(app.hwnd);
-    ::InvalidateRect(app.hwnd, nullptr, FALSE);
+    ::GetWindowRect(app.panel, &rc);
+    app.render.init(app.panel);  // 内部会取 GetDpiForWindow，与上面 dpi 一致
+    return true;
 }
 
-void app_hide(App& app) { ::ShowWindow(app.hwnd, SW_HIDE); }
-
-void app_toggle(App& app) {
-    if (::IsWindowVisible(app.hwnd)) {
-        app_hide(app);
-    } else {
-        app_show(app);
-    }
-}
-
-LRESULT CALLBACK app_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+LRESULT CALLBACK ctl_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     App* app = reinterpret_cast<App*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
     switch (msg) {
@@ -130,40 +117,40 @@ LRESULT CALLBACK app_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                 reinterpret_cast<LONG_PTR>(
                                     reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
             return TRUE;
-        case WM_APP_SHOW:
-            if (app) app_show(*app);
+        case WM_HOTKEY:
+            if (app && wp == app->hotkey_id) app_toggle(*app);
             return 0;
         case WM_APP_TRAY:
             if (app) on_tray(*app, lp);
             return 0;
-        case WM_HOTKEY:
-            if (app && wp == app->hotkey_id) app_toggle(*app);
+        case WM_APP_SHOW:
+            if (app) app_show(*app);
             return 0;
         case WM_APP_ICON_READY:
-            ::InvalidateRect(hwnd, nullptr, FALSE);  // 只标脏，不抢焦点、不重排
+            // 图标工作线程的通知窗口是 ctl，重绘目标是面板
+            if (app && app->panel) ::InvalidateRect(app->panel, nullptr, FALSE);
             return 0;
-        case WM_KEYDOWN:
-            // app 为空的路径理论到不了这里，但不必为此崩一次
-            if (!app) return 0;
-            // TEMP(Task 9 移除)：按 1/2 验证图标三级提取与异步回投
-            if (wp == L'1') {
-                app->debug_icon = L"C:\\Windows\\notepad.exe";
-                ::SetWindowTextW(hwnd, (L"dbg1:" + app->debug_icon).c_str());  // TEMP 观测
-                ::InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
-            }
-            if (wp == L'2') {
-                app->debug_icon = L"D:\\不存在的网盘目录\\a.psd";
-                ::SetWindowTextW(hwnd, (L"dbg2:" + app->debug_icon).c_str());  // TEMP 观测
-                ::InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
-            }
-            ::SetWindowTextW(hwnd, (L"nokey:" + std::to_wstring(wp)).c_str());  // TEMP 观测
-            if (wp == VK_ESCAPE) app_hide(*app);
+        case WM_CLOSE:
+            ::DestroyWindow(hwnd);
             return 0;
-        case WM_CREATE:
-            if (app) app->render.init(hwnd);
+        case WM_DESTROY:
+            ::PostQuitMessage(0);
             return 0;
+        default:
+            break;
+    }
+    return ::DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    App* app = reinterpret_cast<App*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+
+    switch (msg) {
+        case WM_NCCREATE:
+            ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                                reinterpret_cast<LONG_PTR>(
+                                    reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+            return TRUE;
         case WM_SIZE:
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -189,8 +176,9 @@ LRESULT CALLBACK app_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     ::SetWindowTextW(hwnd, dbg_bmp ? L"paint:icon" : L"paint:placeholder");
                     if (dbg_bmp) {
                         app->render.rt->DrawBitmap(
-                            dbg_bmp, D2D1::RectF(card.left + 16.f, card.top + 16.f, card.left + 64.f,
-                                                 card.top + 64.f),
+                            dbg_bmp,
+                            D2D1::RectF(card.left + 16.f, card.top + 16.f, card.left + 64.f,
+                                        card.top + 64.f),
                             1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
                     } else {
                         // 未就绪先画占位，证明“骨架先出、图标后到”
@@ -205,13 +193,84 @@ LRESULT CALLBACK app_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ::EndPaint(hwnd, &ps);
             return 0;
         }
+        case WM_KEYDOWN:
+            // app 为空的路径理论到不了这里，但不必为此崩一次
+            if (!app) return 0;
+            // TEMP(Task 9 移除)：按 1/2 验证图标三级提取与异步回投
+            if (wp == L'1') {
+                app->debug_icon = L"C:\\Windows\\notepad.exe";
+                ::SetWindowTextW(hwnd, (L"dbg1:" + app->debug_icon).c_str());  // TEMP 观测
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (wp == L'2') {
+                app->debug_icon = L"D:\\不存在的网盘目录\\a.psd";
+                ::SetWindowTextW(hwnd, (L"dbg2:" + app->debug_icon).c_str());  // TEMP 观测
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (wp == VK_ESCAPE) app_hide(*app);
+            return 0;
+        case WM_CLOSE:
+            app_hide(*app);  // 关面板不等于退出程序
+            return 0;
         case WM_DESTROY:
-            ::PostQuitMessage(0);
+            if (app) app->render.shutdown();
             return 0;
         default:
             break;
     }
     return ::DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+}  // namespace
+
+void app_show(App& app) {
+    if (!ensure_panel(app)) return;
+
+    POINT pt{};
+    ::GetCursorPos(&pt);
+    const HMONITOR mon = ::MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    ::GetMonitorInfoW(mon, &mi);
+
+    RECT rc{};
+    ::GetWindowRect(app.panel, &rc);
+    const int w = rc.right - rc.left;
+    const int h = rc.bottom - rc.top;
+    const int x = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - w) / 2;
+    const int y = mi.rcWork.top + ((mi.rcWork.bottom - mi.rcWork.top) - h) / 2;
+
+    ::SetWindowPos(app.panel, HWND_TOPMOST, x, y, w, h, SWP_SHOWWINDOW);
+    ::SetForegroundWindow(app.panel);
+    ::InvalidateRect(app.panel, nullptr, FALSE);
+}
+
+void app_hide(App& app) {
+    if (!app.panel) return;
+    ::ShowWindow(app.panel, SW_HIDE);
+    // 隐藏时把绘制表面还给系统：150% 缩放下 1440x930 的表面本身就有 5MB+。
+    // 复用设备丢失那条路径，下次 begin() 会自动重建。
+    app.render.release_surfaces();
+    icons_on_device_lost();
+
+    // 再把常驻页赶回系统。实测：D2D/DWrite 首次绘制后常驻工作集 54MB，
+    // 而裁剪后再次呼出只需要 17MB — 差的那些是字体/字形/命令缓冲缓存，
+    // 不是一次绘制真的需要的。传 (-1,-1) 是“尽可能多地移除页”的惯用写法。
+    // 代价：下次呼出要重新读回页（实测仍为 ~17MB，不卡）。
+    // 注意：私有的提交量（~64MB，分配器高水位）不会因此下降，那要销毁工厂才能收回，
+    // 但那样每次呼出都要重建设备（20-50ms），对热键呼出型工具不划算。
+    ::SetProcessWorkingSetSize(::GetCurrentProcess(), static_cast<SIZE_T>(-1),
+                               static_cast<SIZE_T>(-1));
+}
+
+void app_toggle(App& app) {
+    if (app.panel && ::IsWindowVisible(app.panel)) {
+        app_hide(app);
+    } else {
+        app_show(app);
+    }
 }
 
 bool app_init(App& app, HINSTANCE inst) {
@@ -233,24 +292,25 @@ bool app_init(App& app, HINSTANCE inst) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
     wc.style = CS_DBLCLKS;  // 双击检测由系统完成，视图层不必自己计时
-    wc.lpfnWndProc = app_wndproc;
+    wc.lpfnWndProc = ctl_wndproc;
     wc.hInstance = inst;
-    wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = nullptr;  // 自绘
-    wc.lpszClassName = kWindowClass;
+    wc.lpszClassName = kCtlClass;
     if (!::RegisterClassExW(&wc)) return false;
 
-    const UINT sys_dpi = ::GetDpiForSystem();
-    const int w = ::MulDiv(kDefaultW, static_cast<int>(sys_dpi), 96);
-    const int h = ::MulDiv(kDefaultH, static_cast<int>(sys_dpi), 96);
+    wc.lpfnWndProc = panel_wndproc;
+    wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = nullptr;  // 自绘
+    wc.lpszClassName = kPanelClass;
+    if (!::RegisterClassExW(&wc)) return false;
 
-    // TOOLWINDOW：不出现在任务栏与 Alt+Tab；TOPMOST：呼出后始终在顶层
-    app.hwnd = ::CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kWindowClass, L"Stargazer",
-                                 WS_POPUP, 0, 0, w, h, nullptr, nullptr, inst, &app);
-    if (!app.hwnd) return false;
+    // 控制窗口：不可见、零尺寸，只用来挂托盘与热键。成本几十 KB，
+    // 换成 message-only 窗口就收不到 FindWindow 也收不到广播，得不偿失。
+    app.ctl = ::CreateWindowExW(0, kCtlClass, L"Stargazer", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr,
+                                inst, &app);
+    if (!app.ctl) return false;
 
     app.hotkey_ok =
-        ::RegisterHotKey(app.hwnd, app.hotkey_id, kDefaultHotkeyMods, kDefaultHotkeyKey) != FALSE;
+        ::RegisterHotKey(app.ctl, app.hotkey_id, kDefaultHotkeyMods, kDefaultHotkeyKey) != FALSE;
     if (!app.hotkey_ok) {
         ::MessageBoxW(nullptr,
                       L"全局热键 Ctrl+Shift+Space 注册失败（可能被其它程序占用）。\n"
@@ -264,9 +324,13 @@ bool app_init(App& app, HINSTANCE inst) {
 }
 
 void app_shutdown(App& app) {
-    app.render.shutdown();
-    if (app.hwnd) {
-        ::UnregisterHotKey(app.hwnd, app.hotkey_id);
+    if (app.panel) {
+        app.render.shutdown();
+        ::DestroyWindow(app.panel);
+        app.panel = nullptr;
+    }
+    if (app.ctl) {
+        ::UnregisterHotKey(app.ctl, app.hotkey_id);
         remove_tray_icon(app);
     }
 }

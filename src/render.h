@@ -36,6 +36,9 @@ struct Renderer {
     bool begin();  // 取到 rt 并 BeginDraw；false 表示跳过这一帧
     void end();    // EndDraw；D2DERR_RECREATE_TARGET 时重建设备资源
 
+    // 释放绘制表面（隐藏态复用）。保留像素缓冲，下次绘制时按需重建。
+    void release_surfaces();
+
     IDWriteTextFormat* format(float size, DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL,
                               DWRITE_TEXT_ALIGNMENT align = DWRITE_TEXT_ALIGNMENT_LEADING);
 
