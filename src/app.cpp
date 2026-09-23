@@ -142,14 +142,28 @@ LRESULT CALLBACK app_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // app 为空的路径理论到不了这里，但不必为此崩一次
             if (app && wp == VK_ESCAPE) app_hide(*app);
             return 0;
+        case WM_CREATE:
+            if (app) app->render.init(hwnd);
+            return 0;
+        case WM_SIZE:
+            ::InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
         case WM_ERASEBKGND:
             return 1;  // 全部自绘，禁止系统擦背景以消除闪烁
         case WM_PAINT: {
             PAINTSTRUCT ps{};
             ::BeginPaint(hwnd, &ps);
-            RECT rc{};
-            ::GetClientRect(hwnd, &rc);
-            ::FillRect(ps.hdc, &rc, static_cast<HBRUSH>(::GetStockObject(DKGRAY_BRUSH)));
+            if (app && app->render.begin()) {
+                app->render.clear(app->render.theme.bg);
+                // 必须用逻辑尺寸：直接用 GetClientRect 的物理像素会让卡片在高 DPI 下超出窗口
+                const D2D1_SIZE_F cs = app->render.client_logical();
+                const D2D1_RECT_F card = D2D1::RectF(16.f, 56.f, cs.width - 16.f, cs.height - 16.f);
+                app->render.fill_round_rect(card, 8.f, app->render.theme.panel);
+                app->render.text(D2D1::RectF(24.f, 16.f, 400.f, 44.f), L"Stargazer 渲染层就绪",
+                                 app->render.format(16.f, DWRITE_FONT_WEIGHT_SEMI_BOLD),
+                                 app->render.theme.text);
+                app->render.end();
+            }
             ::EndPaint(hwnd, &ps);
             return 0;
         }
@@ -212,6 +226,7 @@ bool app_init(App& app, HINSTANCE inst) {
 }
 
 void app_shutdown(App& app) {
+    app.render.shutdown();
     if (app.hwnd) {
         ::UnregisterHotKey(app.hwnd, app.hotkey_id);
         remove_tray_icon(app);

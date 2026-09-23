@@ -1,0 +1,173 @@
+#include "render.h"
+
+#include <cstdio>
+
+namespace sg {
+
+bool Renderer::init(HWND wnd) {
+    hwnd = wnd;
+    if (FAILED(::D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &factory))) return false;
+    if (FAILED(::DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+                                     reinterpret_cast<IUnknown**>(&dwrite)))) {
+        return false;
+    }
+    dpi = static_cast<float>(::GetDpiForWindow(hwnd));
+    if (dpi <= 0.f) dpi = 96.f;
+    return create_device_resources();
+}
+
+bool Renderer::create_device_resources() {
+    RECT rc{};
+    ::GetClientRect(hwnd, &rc);
+    const D2D1_SIZE_U size = D2D1::SizeU(
+        static_cast<UINT32>(rc.right > 0 ? rc.right : 1),
+        static_cast<UINT32>(rc.bottom > 0 ? rc.bottom : 1));
+
+    // SetDpi 后所有绘制坐标都是 96 DPI 下的逻辑像素，DPI 换算全部交给 D2D
+    const D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+        D2D1_RENDER_TARGET_TYPE_DEFAULT,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        dpi, dpi);
+    const D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_props =
+        D2D1::HwndRenderTargetProperties(hwnd, size, D2D1_PRESENT_OPTIONS_NONE);
+
+    if (FAILED(factory->CreateHwndRenderTarget(props, hwnd_props, &rt))) return false;
+    if (FAILED(rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush))) return false;
+    return true;
+}
+
+void Renderer::discard_device_resources() {
+    if (brush) {
+        brush->Release();
+        brush = nullptr;
+    }
+    if (rt) {
+        rt->Release();
+        rt = nullptr;
+    }
+}
+
+void Renderer::discard_formats() {
+    for (auto& kv : formats) kv.second->Release();
+    formats.clear();
+}
+
+void Renderer::shutdown() {
+    discard_device_resources();
+    discard_formats();
+    if (dwrite) {
+        dwrite->Release();
+        dwrite = nullptr;
+    }
+    if (factory) {
+        factory->Release();
+        factory = nullptr;
+    }
+}
+
+bool Renderer::begin() {
+    if (!rt) {
+        if (!create_device_resources()) return false;
+    }
+    // 窗口尺寸变化后 rt 需要同步，否则绘制会被裁剪
+    RECT rc{};
+    ::GetClientRect(hwnd, &rc);
+    const D2D1_SIZE_U size =
+        D2D1::SizeU(static_cast<UINT32>(rc.right), static_cast<UINT32>(rc.bottom));
+    if (rt->GetPixelSize() != size) rt->Resize(size);
+    rt->BeginDraw();
+    return true;
+}
+
+void Renderer::end() {
+    if (!rt) return;
+    const HRESULT hr = rt->EndDraw();
+    if (hr == D2DERR_RECREATE_TARGET) {
+        // 设备丢失：丢弃设备相关资源，下一帧重建。图标位图由 icons 模块自理
+        discard_device_resources();
+    }
+}
+
+IDWriteTextFormat* Renderer::format(float size, DWRITE_FONT_WEIGHT weight,
+                                    DWRITE_TEXT_ALIGNMENT align) {
+    wchar_t key[64] = {};
+    ::swprintf_s(key, L"%.1f|%d|%d", size, static_cast<int>(weight), static_cast<int>(align));
+    auto it = formats.find(key);
+    if (it != formats.end()) return it->second;
+
+    IDWriteTextFormat* fmt = nullptr;
+    if (FAILED(dwrite->CreateTextFormat(L"Microsoft YaHei UI", nullptr, weight,
+                                        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                                        size, L"zh-cn", &fmt))) {
+        return nullptr;
+    }
+    fmt->SetTextAlignment(align);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    // 单元格内文字过长时截断，不溢到相邻单元格
+    fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    formats.emplace(key, fmt);
+    return fmt;
+}
+
+void Renderer::clear(D2D1_COLOR_F c) { rt->Clear(&c); }
+
+D2D1_SIZE_F Renderer::client_logical() const {
+    RECT rc{};
+    ::GetClientRect(hwnd, &rc);
+    const float s = scale();
+    return D2D1::SizeF(static_cast<float>(rc.right) / s, static_cast<float>(rc.bottom) / s);
+}
+
+D2D1_POINT_2F Renderer::to_logical(POINT physical) const {
+    const float s = scale();
+    return D2D1::Point2F(static_cast<float>(physical.x) / s, static_cast<float>(physical.y) / s);
+}
+
+RECT Renderer::to_physical(const D2D1_RECT_F& logic) const {
+    const float s = scale();
+    RECT rc{};
+    rc.left = static_cast<LONG>(logic.left * s);
+    rc.top = static_cast<LONG>(logic.top * s);
+    rc.right = static_cast<LONG>(logic.right * s);
+    rc.bottom = static_cast<LONG>(logic.bottom * s);
+    return rc;
+}
+
+void Renderer::fill_rect(const D2D1_RECT_F& r, D2D1_COLOR_F c) {
+    brush->SetColor(c);
+    rt->FillRectangle(&r, brush);
+}
+
+void Renderer::fill_round_rect(const D2D1_RECT_F& r, float radius, D2D1_COLOR_F c) {
+    const D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r, radius, radius);
+    brush->SetColor(c);
+    rt->FillRoundedRectangle(&rr, brush);
+}
+
+void Renderer::stroke_round_rect(const D2D1_RECT_F& r, float radius, D2D1_COLOR_F c, float width) {
+    const D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r, radius, radius);
+    brush->SetColor(c);
+    rt->DrawRoundedRectangle(&rr, brush, width);
+}
+
+void Renderer::text(const D2D1_RECT_F& r, const std::wstring& s, IDWriteTextFormat* fmt,
+                    D2D1_COLOR_F c) {
+    if (!fmt || s.empty()) return;
+    brush->SetColor(c);
+    rt->DrawTextW(s.c_str(), static_cast<UINT32>(s.size()), fmt, r, brush,
+                  D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
+ID2D1Bitmap* make_bitmap(Renderer& r, const void* pixels, int w, int h) {
+    if (!r.rt || w <= 0 || h <= 0 || !pixels) return nullptr;
+    const D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), r.dpi, r.dpi);
+    ID2D1Bitmap* bmp = nullptr;
+    if (FAILED(r.rt->CreateBitmap(D2D1::SizeU(static_cast<UINT32>(w), static_cast<UINT32>(h)),
+                                  pixels, static_cast<UINT32>(w * 4), props, &bmp))) {
+        return nullptr;
+    }
+    return bmp;
+}
+
+}  // namespace sg

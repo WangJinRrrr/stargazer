@@ -29,6 +29,7 @@ target_link_libraries(test_io PRIVATE shell32 ole32 advapi32)
 
 set(SG_SOURCES
   src/main.cpp
+  src/render.cpp
   src/app.cpp
   src/text_io.cpp
   src/persist.cpp

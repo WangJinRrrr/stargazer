@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "persist.h"
+#include "render.h"
 
 namespace sg {
 
@@ -16,6 +17,7 @@ struct App {
     HINSTANCE inst = nullptr;
     HWND hwnd = nullptr;
     Paths paths;
+    Renderer render;
     UINT hotkey_id = 1;  // RegisterHotKey 的 id
     bool hotkey_ok = false;
     // 外部拖拽在窗口上悬停时为 true（抑制悬停高亮更新，不用于隐藏）

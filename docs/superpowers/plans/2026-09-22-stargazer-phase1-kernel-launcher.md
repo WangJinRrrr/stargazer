@@ -2886,6 +2886,14 @@ git commit -m "feat(edit): InlineEdit 原生 EDIT 子控件封装，含 IME 与�
 
 **Interfaces:**
 - Consumes: `sg::LaunchGroup` / `sg::LaunchItem`（Task 3）、`sg::contains_ci`（Task 2）、`sg::Renderer`（Task 6）、`sg::icons_get`（Task 7）、`sg::InlineEdit`（Task 8）
+
+> **坐标约定（Task 6 实测修正，实现时以此为准）**：D2D 因为 `SetDpi(dpi,dpi)` 用的是 96 DPI 逻辑坐标，
+> 而 `GetClientRect` / 鼠标 lParam / 子 HWND 都是物理像素，两套混用会在高 DPI 下出错。因此：
+> - `launcher_*` 的 `client` 参数一律改为 `const D2D1_SIZE_F&`（逻辑 DIP，取值用 `Renderer::client_logical()`），
+>   而不是 `RECT`；下文代码里的 `const RECT& client` 与 `client.right - client.left` 逐处对应替换。
+> - 命中测试前先把鼠标点转成逻辑坐标：`D2D1_POINT_2F p = render.to_logical(pt);`
+> - 传给 `InlineEdit` 的矩形必须先 `render.to_physical(logic_rect)`，否则编辑框会跑到错误位置。
+> - 三个换算函数都在 `Renderer` 上，视图层不得再自己乘除 DPI。
 - Produces:
   - `enum class sg::View { Launcher, Box, Todo, Explorer }`
   - `struct sg::LauncherState { int group; int sel; int hover; int scroll; std::wstring query; std::vector<int> filtered; InlineEdit search; }`
