@@ -7,7 +7,8 @@
 #include <shellapi.h>  // ShellExecuteW（打开）
 
 #include "app.h"
-#include "dragdrop.h"  // make_hdrop（Ctrl+C 与拖出共用同一个构造函数）
+#include "clipboard.h"
+#include "dragdrop.h"  // box_move_item 不需要，但 make_hdrop 由 clipboard 使用
 #include "fs_work.h"
 
 namespace sg {
@@ -32,19 +33,6 @@ D2D1_RECT_F box_tab_rect(const AppState& s, D2D1_SIZE_F client, int index) {
 }
 
 // CF_UNICODETEXT 的全局内存块。成功后所有权归剪贴板，调用方不得再释放
-HGLOBAL make_text_hglobal(const std::wstring& text) {
-    const SIZE_T bytes = (text.size() + 1) * sizeof(wchar_t);
-    HGLOBAL h = ::GlobalAlloc(GMEM_MOVEABLE, bytes);
-    if (!h) return nullptr;
-    void* p = ::GlobalLock(h);
-    if (!p) {
-        ::GlobalFree(h);
-        return nullptr;
-    }
-    ::memcpy(p, text.c_str(), bytes);
-    ::GlobalUnlock(h);
-    return h;
-}
 
 }  // namespace
 
@@ -320,16 +308,9 @@ void box_copy_selected(App& app) {
     const std::wstring path = items[sel].path;
     if (path.empty()) return;
 
-    // 两种格式都给：粘到文本框是路径文本，粘到资源管理器就是“粘贴文件”
-    if (!::OpenClipboard(app.panel)) return;
-    ::EmptyClipboard();
-    if (HGLOBAL h = make_text_hglobal(path)) {
-        if (!::SetClipboardData(CF_UNICODETEXT, h)) ::GlobalFree(h);
-    }
-    if (HGLOBAL h = make_hdrop({ path })) {
-        if (!::SetClipboardData(CF_HDROP, h)) ::GlobalFree(h);
-    }
-    ::CloseClipboard();
+    // 两种格式一起给：粘到文本框是路径文本，粘到资源管理器就是“粘贴文件”。
+    // 与浏览视图共用同一份实现（clipboard）
+    clipboard_set_paths({ path }, false);
 }
 
 void box_open_selected(App& app) {

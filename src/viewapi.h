@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "edit.h"
+#include "fs_work.h"  // FsEntry（浏览视图的列表项）
 #include "model/store.h"
 #include "render.h"
 
@@ -26,6 +27,24 @@ struct BoxState {
     InlineEdit edit;
 };
 
+// 浏览视图状态（本地目录 / 网盘目录）。列表是异步枚举出来的，所以带 requestId。
+struct BrowseState {
+    std::wstring path;               // 当前目录（空 = 还没设置过根目录）
+    std::vector<FsEntry> entries;    // 当前列表（已排序：目录在前 + 自然序）
+    std::wstring error;              // 非空 = 枚举失败（列表区显示错误行 + F5）
+    std::wstring note;               // 最近一次操作的提示（如“跳过 2 个同名文件”）
+    int sel = -1;
+    int hover = -1;
+    int scroll = 0;
+    std::vector<std::wstring> history;  // 访问过的目录（含当前），hist_pos 指向当前
+    int hist_pos = -1;
+    uint64_t request_id = 0;            // 每次枚举递增，用来丢弃过期结果
+    uint64_t op_id = 0;                 // 文件操作同样带 id
+    bool loading = false;
+    // 路径栏的输入框：默认只画文本，点路径栏或 Ctrl+L 才打开它（避免跟列表抢键盘）
+    InlineEdit path_edit;
+};
+
 struct AppState {
     std::vector<Box> boxes;
     std::vector<TodoItem> todos;
@@ -33,6 +52,7 @@ struct AppState {
     int bad_lines = 0;
     View view = View::Box;  // 首次启动（ui.txt 还没有记录时）停在收纳盒
     BoxState box_view;
+    BrowseState browse;
     bool data_dirty = false;
     // ui.txt 里想要的窗口尺寸（逻辑像素）。0 = 用默认值。
     // 存起来等面板真正创建时再应用：app_load 跑在面板存在之前，那里改尺寸是死代码。

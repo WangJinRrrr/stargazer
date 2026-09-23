@@ -21,6 +21,10 @@ constexpr UINT WM_APP_TRAY = WM_APP + 2;
 constexpr UINT WM_APP_ICON_READY = WM_APP + 3;
 // 文件系统工作线程（线程 B）完成一批存在性校验
 constexpr UINT WM_APP_FS_CHECKED = WM_APP + 4;
+// 目录枚举完成（浏览视图）
+constexpr UINT WM_APP_DIR_LOADED = WM_APP + 5;
+// 文件操作（改名/新建/删除/粘贴）完成
+constexpr UINT WM_APP_FS_OP_DONE = WM_APP + 6;
 
 struct App {
     HINSTANCE inst = nullptr;

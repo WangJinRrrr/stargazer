@@ -46,4 +46,12 @@ int natural_compare(const std::wstring& a, const std::wstring& b) {
     return 0;
 }
 
+bool equals_ci(const std::wstring& a, const std::wstring& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (lower(a[i]) != lower(b[i])) return false;
+    }
+    return true;
+}
+
 }  // namespace sg

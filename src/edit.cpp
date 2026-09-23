@@ -149,6 +149,11 @@ std::wstring InlineEdit::text() const {
     return out;
 }
 
+void InlineEdit::set_text(const std::wstring& text) {
+    if (!hwnd) return;
+    ::SetWindowTextW(hwnd, text.c_str());
+}
+
 void InlineEdit::focus() {
     if (hwnd) ::SetFocus(hwnd);
 }

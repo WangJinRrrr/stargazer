@@ -68,8 +68,8 @@ $CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 |---|---|
 | `boxes.txt` | `盒子 \t 名称 \t 路径`（空盒子写一行“盒子名 + 两个空字段”的占位行） |
 | `todo.txt` | 待办（尚未实现） |
-| `config.txt` | `键 \t 值` |
-| `ui.txt` | 窗口尺寸（逻辑像素）、上次视图、上次分组、上次盒子 |
+| `config.txt` | `键 \t 值`；目前只有 `browse_root`（浏览的根目录，由托盘菜单写入） |
+| `ui.txt` | 窗口尺寸（逻辑像素）、上次视图（`0` 收纳盒 / `1` 待办 / `2` 浏览）、上次盒子 |
 
 UTF-8 编码、无 BOM，行内 Tab 分隔，字段内 `|` `Tab` `换行` 分别写作 `||` `|t` `|n`。
 

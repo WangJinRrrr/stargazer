@@ -49,6 +49,43 @@ std::wstring extension_of(const std::wstring& path) {
     return L"." + ext;
 }
 
+std::wstring parent_path(const std::wstring& path) {
+    std::wstring p = path;
+    // 去掉尾分隔符（但 "C:\\" 这种根保留）
+    while (p.size() > 1 && is_sep(p.back())) {
+        if (p.size() == 3 && p[1] == L':') break;
+        p.pop_back();
+    }
+    if (p.empty()) return std::wstring();
+
+    // UNC：\\server\share 本身就是根，再往上没有意义
+    const bool unc = p.size() >= 2 && is_sep(p[0]) && is_sep(p[1]);
+    if (unc) {
+        const size_t share_end = p.find_first_of(L"\\/", 2);
+        if (share_end == std::wstring::npos) return std::wstring();  // 只有 \\server
+        const size_t next = p.find_first_of(L"\\/", share_end + 1);
+        if (next == std::wstring::npos) return std::wstring();       // \\server\share 已到顶
+        return p.substr(0, next);
+    }
+
+    if (p.size() == 3 && p[1] == L':') return std::wstring();  // "C:\\" 已在顶层
+
+    const size_t slash = p.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return std::wstring();  // 相对路径，没有上一级
+    if (slash == 2 && p[1] == L':') return p.substr(0, 3);   // "C:\\a" -> "C:\\"
+    if (slash == 0) return std::wstring();                    // "\\a" -> 顶层
+    return p.substr(0, slash);
+}
+
+std::wstring append_name(const std::wstring& dir, const std::wstring& name) {
+    if (dir.empty()) return name;
+    if (is_sep(dir.back())) return dir + name;
+    std::wstring out = dir;
+    out += L'\\';
+    out += name;
+    return out;
+}
+
 std::wstring join_path(const std::wstring& dir, const std::wstring& name) {
     if (dir.empty()) return name;
     if (!is_sep(dir.back())) return dir + L"\\" + name;

@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "model/bgra.h"
+#include "model/dirlist.h"
 #include "model/paths.h"
 #include "model/rowformat.h"
 #include "model/search.h"
@@ -270,6 +271,49 @@ static void test_box_name_taken() {
     CHECK(!sg::box_name_taken(boxes, L"", 0));   // 空名不算占用（调用方本来就拒绝空名）
 }
 
+// 浏览视图的纯逻辑：目录优先 + 自然序、上一级路径、新建文件夹命名
+static void test_dirlist_sort_and_names() {
+    using sg::DirEntry;
+    std::vector<DirEntry> e = {
+        { L"10.txt", false }, { L"2.txt", false }, { L"1.txt", false },
+        { L"b_folder", true }, { L"a_folder", true },  { L"A.txt", false },
+    };
+    sg::sort_dir_entries(e);
+    CHECK_EQ(e.size(), size_t{6});
+    // 目录在前（按自然序），文件在后（自然序：数字按值比较）
+    CHECK_EQ(e[0].name, std::wstring(L"a_folder"));
+    CHECK_EQ(e[1].name, std::wstring(L"b_folder"));
+    CHECK_EQ(e[2].name, std::wstring(L"1.txt"));
+    CHECK_EQ(e[3].name, std::wstring(L"2.txt"));
+    CHECK_EQ(e[4].name, std::wstring(L"10.txt"));
+    CHECK_EQ(e[5].name, std::wstring(L"A.txt"));
+}
+
+static void test_parent_path() {
+    CHECK_EQ(sg::parent_path(L"C:\\a\\b"), std::wstring(L"C:\\a"));
+    CHECK_EQ(sg::parent_path(L"C:\\a\\b\\"), std::wstring(L"C:\\a"));
+    CHECK_EQ(sg::parent_path(L"C:\\a"), std::wstring(L"C:\\"));
+    CHECK_EQ(sg::parent_path(L"C:\\"), std::wstring(L""));            // 已在根
+    CHECK_EQ(sg::parent_path(L"D:/x/y/"), std::wstring(L"D:/x"));      // 正斜杠同样处理
+    CHECK_EQ(sg::parent_path(L"a"), std::wstring(L""));                 // 相对路径没有上一级
+    CHECK_EQ(sg::parent_path(L"\\\\server\\share"), std::wstring(L""));  // UNC 根不再往上
+    CHECK_EQ(sg::parent_path(L"\\\\server\\share\\dir"), std::wstring(L"\\\\server\\share"));
+    CHECK_EQ(sg::append_name(L"C:\\a", L"b"), std::wstring(L"C:\\a\\b"));
+    CHECK_EQ(sg::append_name(L"C:\\a\\", L"b"), std::wstring(L"C:\\a\\b"));
+    CHECK_EQ(sg::append_name(L"", L"b"), std::wstring(L"b"));
+}
+
+static void test_new_folder_name() {
+    CHECK_EQ(sg::new_folder_name({}), std::wstring(L"新建文件夹"));
+    CHECK_EQ(sg::new_folder_name({ L"新建文件夹" }), std::wstring(L"新建文件夹 (2)"));
+    CHECK_EQ(sg::new_folder_name({ L"新建文件夹", L"新建文件夹 (2)" }),
+             std::wstring(L"新建文件夹 (3)"));
+    CHECK_EQ(sg::new_folder_name({ L"其它" }), std::wstring(L"新建文件夹"));
+    // 重名判定大小写不敏感，但 "1" 与 "01" 不是同一个名字
+    CHECK(sg::name_taken({ L"Readme.txt" }, L"README.TXT"));
+    CHECK(!sg::name_taken({ L"1" }, L"01"));
+}
+
 static void test_todos_roundtrip_and_sort() {
     std::vector<sg::TodoItem> todos;
     todos.push_back({ 1, false, 100, 0, 0, L"普通" });
@@ -355,6 +399,9 @@ int main() {
     test_box_add_paths();
     test_box_move_item();
     test_box_name_taken();
+    test_dirlist_sort_and_names();
+    test_parent_path();
+    test_new_folder_name();
     test_todos_roundtrip_and_sort();
     test_config();
     test_premultiply_bgra();

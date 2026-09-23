@@ -30,6 +30,8 @@ struct InlineEdit {
               std::function<void()> cancel);
     void set_rect(const RECT& rc);
     void close();
+    // 改写输入框内容（路径栏跟随当前目录用）
+    void set_text(const std::wstring& text);
     bool is_open() const { return hwnd != nullptr; }
     std::wstring text() const;
     void focus();

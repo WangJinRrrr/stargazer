@@ -17,6 +17,7 @@ set(MODEL_SOURCES
   src/model/paths.cpp
   src/model/search.cpp
   src/model/store.cpp
+  src/model/dirlist.cpp
   src/model/bgra.cpp
 )
 
@@ -41,9 +42,11 @@ set(SG_SOURCES
   src/icons.cpp
   src/fs_work.cpp
   src/edit.cpp
+  src/clipboard.cpp
   src/views/grid.cpp
   src/views/grid_layout.cpp
   src/views/box.cpp
+  src/views/browse.cpp
   src/dragdrop.cpp
 )
 

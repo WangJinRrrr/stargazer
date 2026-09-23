@@ -7,11 +7,15 @@
 #include <string>
 
 #include "icons.h"
+#include "clipboard.h"
 #include "dragdrop.h"
 #include "fs_work.h"
 #include "model/paths.h"
 #include "text_io.h"
 #include "views/box.h"
+#include "views/browse.h"
+
+#include <shobjidl.h>  // IFileDialog（托盘菜单选浏览目录）
 
 namespace sg {
 
@@ -21,6 +25,9 @@ const wchar_t* kPanelClass = L"StargazerWnd";
 namespace {
 
 const UINT kTrayId = 1;
+
+// 托盘菜单要用（定义在下方）
+static void app_set_view(App& app, View v);
 
 // 崩溃日志路径。写不进去就算了，崩溃路径上不能再抛异常
 std::wstring g_crash_log;
@@ -66,6 +73,34 @@ const UINT kDefaultHotkeyKey = VK_SPACE;
 const int kDefaultW = 960;
 const int kDefaultH = 620;
 
+// 托盘菜单用：系统文件夹选择框（托盘是“呼出型”工具的设置入口，不开设置窗口）
+bool pick_folder(HWND owner, std::wstring& out) {
+    IFileDialog* dlg = nullptr;
+    if (FAILED(::CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&dlg)))) {
+        return false;
+    }
+    bool ok = false;
+    DWORD opts = 0;
+    if (SUCCEEDED(dlg->GetOptions(&opts))) {
+        dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+        dlg->SetTitle(L"选择浏览目录（可以是网盘挂载的目录）");
+        if (SUCCEEDED(dlg->Show(owner))) {
+            if (IShellItem* item = nullptr; SUCCEEDED(dlg->GetResult(&item)) && item) {
+                PWSTR path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
+                    out = path;
+                    ok = true;
+                    ::CoTaskMemFree(path);
+                }
+                item->Release();
+            }
+        }
+    }
+    dlg->Release();
+    return ok;
+}
+
 void add_tray_icon(App& app) {
     NOTIFYICONDATAW nid{};
     nid.cbSize = sizeof(nid);
@@ -91,6 +126,7 @@ void show_tray_menu(App& app) {
 
     HMENU menu = ::CreatePopupMenu();
     ::AppendMenuW(menu, MF_STRING, 1, L"呼出 (&S)");
+    ::AppendMenuW(menu, MF_STRING, 4, L"设置浏览目录…(&D)");
     ::AppendMenuW(menu, MF_STRING, 2, L"开机自启");
     if (autostart_enabled()) {
         ::CheckMenuItem(menu, 2, MF_BYCOMMAND | MF_CHECKED);
@@ -115,6 +151,19 @@ void show_tray_menu(App& app) {
         case 3:
             ::PostMessageW(app.ctl, WM_CLOSE, 0, 0);
             break;
+        case 4: {
+            // 选浏览目录：系统文件夹选择框 → 写 config.txt（next 启动仍在）→ 直接跳过去
+            if (std::wstring dir; pick_folder(app.ctl, dir)) {
+                config_set(app.state.config, L"browse_root", dir);
+                save_text(app.paths, L"config.txt", serialize_config(app.state.config));
+                app.state.browse.history.clear();
+                app.state.browse.hist_pos = -1;
+                app.state.browse.path.clear();
+                app_show(app);
+                app_set_view(app, View::Browse);
+            }
+            break;
+        }
         default:
             break;
     }
@@ -180,6 +229,7 @@ static void app_set_view(App& app, View v) {
     if (app.panel == nullptr || v == app.state.view) return;
     AppState& s = app.state;
     s.box_view.edit.close();
+    s.browse.path_edit.close();
     s.view = v;
     if (v == View::Box) {
         s.box_view.sel = -1;
@@ -188,6 +238,9 @@ static void app_set_view(App& app, View v) {
         box_clamp(s, app.render.client_logical());
         ::SetFocus(app.panel);  // 网格视图自己收键盘，不需要子控件
         box_request_check(app);  // 切进来也要校验，否则失效标记是上一次的
+    }
+    if (v == View::Browse) {
+        browse_activate(app);
     }
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
@@ -236,6 +289,12 @@ LRESULT CALLBACK ctl_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 fs_drain();
                 ::InvalidateRect(app->panel, nullptr, FALSE);
             }
+            return 0;
+        case WM_APP_DIR_LOADED:
+            if (app && app->panel) browse_on_dir_loaded(*app);
+            return 0;
+        case WM_APP_FS_OP_DONE:
+            if (app && app->panel) browse_on_op_done(*app);
             return 0;
         case WM_CLOSE:
             ::DestroyWindow(hwnd);
@@ -289,6 +348,9 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app->state.view == View::Box) {
                 app->state.box_view.scroll = std::max(0, app->state.box_view.scroll + step);
                 box_clamp(app->state, app->render.client_logical());
+            } else if (app->state.view == View::Browse) {
+                BrowseState& b = app->state.browse;
+                b.scroll = std::max(0, b.scroll + step);
             } else {
                 return 0;
             }
@@ -314,8 +376,11 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     case View::Box:
                         box_render(*app);
                         break;
+                    case View::Browse:
+                        browse_render(*app);
+                        break;
                     default:
-                        // 待办 / 浏览还没实现；这一行只用来证明切换真的生效
+                        // 待办还没实现；这一行只用来证明切换真的生效
                         app->render.text(
                             D2D1::RectF(kPad, kViewTabsH + kPad * 2.f, cs.width - kPad,
                                         kViewTabsH + kPad * 2.f + 40.f),
@@ -381,7 +446,22 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
 
-            if (app->state.view != View::Box) return 0;  // 目前只有收纳盒有网格
+            if (app->state.view != View::Box) {
+                // 浏览：悬停高亮 + 滚轮（键盘归列表，不需子控件）
+                if (app->state.view == View::Browse) {
+                    const int bh = browse_row_hittest(app->state, cs, lpt);
+                    if (bh != app->state.browse.hover) {
+                        app->state.browse.hover = bh;
+                        if (!app->mouse_tracking) {
+                            TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
+                            ::TrackMouseEvent(&tme);
+                            app->mouse_tracking = true;
+                        }
+                        ::InvalidateRect(hwnd, nullptr, FALSE);
+                    }
+                }
+                return 0;
+            }
 
             const int hit = box_hittest(*app, lpt);
             int& hover = app->state.box_view.hover;
@@ -402,6 +482,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app) {
                 app->mouse_tracking = false;
                 app->state.box_view.hover = -1;
+                app->state.browse.hover = -1;
                 ::InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
@@ -417,7 +498,21 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 app_set_view(*app, static_cast<View>(vt));
                 return 0;
             }
-            if (app->state.view != View::Box) return 0;  // 其他视图还;没有鼠标交互
+            if (app->state.view == View::Browse) {
+                // 路径栏点击 → 开输入框；列表点击 → 选中行
+                const D2D1_RECT_F bar = browse_path_rect(cs);
+                if (lpt.x >= bar.left && lpt.x <= bar.right && lpt.y >= bar.top &&
+                    lpt.y <= bar.bottom) {
+                    browse_edit_path(*app);
+                    return 0;
+                }
+                const int row = browse_row_hittest(app->state, cs, lpt);
+                app->state.browse.sel = row;
+                if (row >= 0) ::SetFocus(hwnd);
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (app->state.view != View::Box) return 0;
 
             const int tab = box_tab_hittest(app->state, cs, lpt);
             if (tab >= 0) {
@@ -477,9 +572,17 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_LBUTTONDBLCLK: {
             // 双击打开（CS_DBLCLKS 已开启，系统保证只有快速双击才发这条消息）
             if (!app) return 0;
-            if (app->state.view != View::Box) return 0;
             const D2D1_POINT_2F lpt =
                 app->render.to_logical(POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
+            if (app->state.view == View::Browse) {
+                const int row = browse_row_hittest(app->state, app->render.client_logical(), lpt);
+                if (row >= 0) {
+                    app->state.browse.sel = row;
+                    browse_open_selected(*app);  // 目录=进入；文件=打开
+                }
+                return 0;
+            }
+            if (app->state.view != View::Box) return 0;
             const int bhit = box_hittest(*app, lpt);
             if (bhit >= 0) {
                 app->state.box_view.sel = bhit;
@@ -502,8 +605,11 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             POINT client = pt;
             ::ScreenToClient(hwnd, &client);
             // 菜单按当前视图分发（与启动板菜单同一入口）
+            // 菜单按当前视图分发
             if (app->state.view == View::Box) {
                 box_context_menu(*app, pt, client);
+            } else if (app->state.view == View::Browse) {
+                browse_context_menu(*app, pt, client);
             }
             return 0;
         }
@@ -516,6 +622,8 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app_view_hotkey(*app, static_cast<UINT>(wp))) return 0;
             if (app->state.view == View::Box) {
                 box_keydown(*app, static_cast<UINT>(wp));
+            } else if (app->state.view == View::Browse) {
+                browse_keydown(*app, static_cast<UINT>(wp));
             }
             return 0;
         }
@@ -658,6 +766,9 @@ void app_show(App& app) {
         ::SetFocus(app.panel);
         // 呼出时校验当前盒子（只校验当前盒子：大盒子全量校验会拖慢呼出）
         box_request_check(app);
+    } else if (s.view == View::Browse) {
+        ::SetFocus(app.panel);
+        browse_activate(app);  // 首路径从 config 的 browse_root 取（空则用 exe 目录）并枚举
     } else {
         ::SetFocus(app.panel);  // 其他视图自己收键盘
     }
@@ -668,6 +779,7 @@ void app_hide(App& app) {
     if (!app.panel) return;
     app_save_if_dirty(app);  // 用户改完就切走很自然，落盘不能等退出
     app.state.box_view.edit.close();  // 悬空的输入框比看不见的窗口更让人困惑
+    app.state.browse.path_edit.close();
     ::ShowWindow(app.panel, SW_HIDE);
     // 隐藏时把绘制表面还给系统：150% 缩放下 1440x930 的表面本身就有 5MB+。
     // 复用设备丢失那条路径，下次 begin() 会自动重建。
