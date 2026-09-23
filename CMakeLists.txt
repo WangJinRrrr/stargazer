@@ -27,9 +27,9 @@ target_include_directories(test_model PRIVATE src)
 
 add_executable(test_io tests/test_io.cpp
   src/text_io.cpp src/persist.cpp src/model/paths.cpp src/model/rowformat.cpp
-  src/dragdrop.cpp)
+  src/dragdrop.cpp src/png.cpp src/clipboard.cpp)
 target_include_directories(test_io PRIVATE src)
-target_link_libraries(test_io PRIVATE shell32 ole32 advapi32)
+target_link_libraries(test_io PRIVATE shell32 ole32 advapi32 windowscodecs)
 
 add_executable(test_layout tests/test_layout.cpp src/views/grid_layout.cpp)
 target_include_directories(test_layout PRIVATE src)
@@ -44,6 +44,7 @@ set(SG_SOURCES
   src/fs_work.cpp
   src/edit.cpp
   src/clipboard.cpp
+  src/png.cpp
   src/views/grid.cpp
   src/views/grid_layout.cpp
   src/views/box.cpp
@@ -55,4 +56,4 @@ add_executable(stargazer WIN32 ${SG_SOURCES} ${MODEL_SOURCES})
 target_include_directories(stargazer PRIVATE src)
 target_compile_options(stargazer PRIVATE /O2)
 target_link_libraries(stargazer PRIVATE
-  d2d1 dwrite shell32 ole32 shlwapi comctl32 dwmapi user32 gdi32)
+  d2d1 dwrite shell32 ole32 shlwapi comctl32 dwmapi user32 gdi32 windowscodecs)

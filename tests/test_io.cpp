@@ -1,13 +1,17 @@
 #include <windows.h>
 #include <shellapi.h>  // DragQueryFileW
 #include <shlobj.h>
+#include <wincodec.h>  // 把编出的 PNG 解回来验证
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include "model/paths.h"
+#include "clipboard.h"
 #include "dragdrop.h"
 #include "persist.h"
+#include "png.h"
 #include "text_io.h"
 
 static int g_failed = 0;
@@ -135,6 +139,98 @@ static void test_make_hdrop() {
     ::GlobalFree(h);
 }
 
+// 造一小段 DIB（纯红），bpp = 24/32，top_down 控制 biHeight 的正负
+static std::vector<uint8_t> make_dib(int w, int h, int bpp, bool top_down) {
+    const int stride = ((w * bpp + 31) / 32) * 4;
+    std::vector<uint8_t> dib(sizeof(BITMAPINFOHEADER) + size_t(stride) * h, 0);
+    auto* bi = reinterpret_cast<BITMAPINFOHEADER*>(dib.data());
+    bi->biSize = sizeof(BITMAPINFOHEADER);
+    bi->biWidth = w;
+    bi->biHeight = top_down ? -h : h;  // 负 = 自上而下
+    bi->biPlanes = 1;
+    bi->biBitCount = static_cast<WORD>(bpp);
+    bi->biCompression = BI_RGB;
+    uint8_t* px = dib.data() + sizeof(BITMAPINFOHEADER);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            uint8_t* p = px + size_t(y) * stride + size_t(x) * (bpp / 8);
+            p[0] = 0; p[1] = 0; p[2] = 255;  // BGR = 红
+            if (bpp == 32) p[3] = 255;
+        }
+    }
+    return dib;
+}
+
+// Review Focus 1：四种位图变体都要能编出“能看”的 PNG（不黑块、不上下颠倒、不负片）
+static void test_png_encode_dib() {
+    const std::wstring dir = temp_dir();
+    const struct { int bpp; bool top_down; const wchar_t* name; } cases[] = {
+        { 32, false, L"t32_bottom.png" }, { 32, true, L"t32_top.png" },
+        { 24, false, L"t24_bottom.png" }, { 24, true, L"t24_top.png" },
+    };
+    for (const auto& c : cases) {
+        const std::wstring path = sg::join_path(dir, c.name);
+        ::DeleteFileW(path.c_str());
+        std::wstring err;
+        const std::vector<uint8_t> dib = make_dib(8, 4, c.bpp, c.top_down);
+        CHECK(sg::png_encode_dib(path, dib, err));
+        CHECK(::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES);
+
+        // 头 8 字节必须是 PNG 签名
+        std::vector<uint8_t> head(8);
+        FILE* f = nullptr;
+        CHECK(::_wfopen_s(&f, path.c_str(), L"rb") == 0);
+        if (f) {
+            CHECK(::fread(head.data(), 1, 8, f) == 8);
+            ::fclose(f);
+        }
+        const uint8_t sig[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+        CHECK(::memcmp(head.data(), sig, 8) == 0);
+
+        // 用 WIC 解回来：尺寸对，且左上角像素是红的（证明行序没搞反）
+        IWICImagingFactory* fac = nullptr;
+        CHECK(SUCCEEDED(::CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                           IID_PPV_ARGS(&fac))));
+        if (fac) {
+            IWICBitmapDecoder* dec = nullptr;
+            CHECK(SUCCEEDED(fac->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+                                                           WICDecodeMetadataCacheOnDemand, &dec)));
+            IWICBitmapFrameDecode* frame = nullptr;
+            if (dec) CHECK(SUCCEEDED(dec->GetFrame(0, &frame)));
+            UINT w = 0, h = 0;
+            if (frame) CHECK(SUCCEEDED(frame->GetSize(&w, &h)));
+            CHECK_EQ(w, 8u);
+            CHECK_EQ(h, 4u);
+            if (frame) {
+                std::vector<uint8_t> rgba(8u * 4u * 4u);
+                CHECK(SUCCEEDED(frame->CopyPixels(nullptr, 8 * 4,
+                                                  static_cast<UINT>(rgba.size()), rgba.data())));
+                CHECK(rgba[2] > 200);  // R
+                CHECK(rgba[1] < 60);   // G
+                CHECK(rgba[0] < 60);   // B
+            }
+            if (frame) frame->Release();
+            if (dec) dec->Release();
+            fac->Release();
+        }
+        ::DeleteFileW(path.c_str());
+    }
+
+    // 坏输入不能崩：头都不够长
+    std::wstring err;
+    CHECK(!sg::png_encode_dib(sg::join_path(dir, L"bad.png"), std::vector<uint8_t>{ 1, 2, 3 },
+                              err));
+    CHECK(!err.empty());
+}
+
+// 剪贴板里没有位图时返回 false（同机运行，不依赖外部状态）
+static void test_clipboard_image_read() {
+    std::vector<uint8_t> dib;
+    if (!sg::clipboard_get_image_dib(dib)) CHECK(dib.empty());
+    std::wstring text;
+    if (!sg::clipboard_get_text(text)) CHECK(text.empty());
+}
+
 int main() {
     ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     test_roundtrip_utf8();
@@ -142,6 +238,8 @@ int main() {
     test_dir_writable_probe();
     test_atomic_write_leaves_no_tmp();
     test_make_hdrop();
+    test_png_encode_dib();
+    test_clipboard_image_read();
 
     if (g_failed == 0) {
         std::printf("OK: test_io 全部通过\n");
