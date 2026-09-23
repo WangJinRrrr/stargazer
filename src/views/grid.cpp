@@ -27,6 +27,11 @@ D2D1_COLOR_F ext_color(const std::wstring& path) {
     return palette[h % 8];
 }
 
+D2D1_RECT_F grid_label_rect(const D2D1_RECT_F& cell) {
+    return D2D1::RectF(cell.left + 4.f, cell.top + 8.f + 48.f + 3.f, cell.right - 4.f,
+                       cell.bottom - 4.f);
+}
+
 void grid_render(Renderer& r, const GridLayout& gl, const std::vector<GridItem>& items,
                  int scroll) {
     IDWriteTextFormat* name_fmt =
@@ -61,8 +66,7 @@ void grid_render(Renderer& r, const GridLayout& gl, const std::vector<GridItem>&
                    D2D1::ColorF(1.f, 1.f, 1.f, 0.9f));
         }
 
-        const D2D1_RECT_F label =
-            D2D1::RectF(rc.left + 4.f, iy + 48.f + 3.f, rc.right - 4.f, rc.bottom - 4.f);
+        const D2D1_RECT_F label = grid_label_rect(rc);
         if (items[i].missing) {
             // 失效项：名字灰显 + 中段一条删除线（先画正常底与图标，只动名字）
             r.text(label, items[i].label, name_fmt, r.theme.text_faint);

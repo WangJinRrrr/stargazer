@@ -183,6 +183,13 @@ D2D1_POINT_2F Renderer::to_logical(POINT physical) const {
     return D2D1::Point2F(static_cast<float>(physical.x) / s, static_cast<float>(physical.y) / s);
 }
 
+D2D1_RECT_F Renderer::to_logical_rect(const RECT& physical) const {
+    const float s = scale();
+    return D2D1::RectF(static_cast<float>(physical.left) / s, static_cast<float>(physical.top) / s,
+                       static_cast<float>(physical.right) / s,
+                       static_cast<float>(physical.bottom) / s);
+}
+
 RECT Renderer::to_physical(const D2D1_RECT_F& logic) const {
     const float s = scale();
     RECT rc{};

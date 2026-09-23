@@ -66,6 +66,12 @@ void reselect_by_id(AppState& s, long long id) {
     }
 }
 
+// 行内文字区域（复选框右边）：绘制与 F2 改名框共用，两边不会错位
+D2D1_RECT_F todo_row_text_rect(const D2D1_RECT_F& row) {
+    const float x = row.left + 6.f + 20.f + 10.f;  // 复选框 20 + 间距 10
+    return D2D1::RectF(x, row.top, row.right - 6.f, row.bottom);
+}
+
 // 一条列表项；row 是它的整行矩形（文字 32 / 多行 40 / 图片 96）
 void draw_row(App& app, int index, const D2D1_RECT_F& row) {
     Renderer& r = app.render;
@@ -102,9 +108,9 @@ void draw_row(App& app, int index, const D2D1_RECT_F& row) {
                             selected ? r.theme.text : r.theme.stroke_strong, 1.f);
     }
 
-    const float content_x = box.right + 10.f;
-    const float content_w = std::max(0.f, row.right - 6.f - content_x);
-    const D2D1_RECT_F lab = D2D1::RectF(content_x, row.top, row.right - 6.f, row.bottom);
+    const D2D1_RECT_F lab = todo_row_text_rect(row);
+    const float content_x = lab.left;
+    const float content_w = lab.right - lab.left;
 
     if (item.kind == TodoKind::Image) {
         // 缩略图框：系统缩略图（工作线程取、UI 建位图）；未到位时先画占位色块
@@ -248,6 +254,8 @@ void todo_render(App& app) {
         r.text(D2D1::RectF(inner.left + 10.f, in.top, inner.right, in.bottom), L"记一条…",
                r.format(14.f), r.theme.text_faint);
     }
+    // 改名框的聚焦框：画在最后，否则会被行的选中/悬停底盖掉
+    edit_draw_focus_ring(r, t.edit);
 }
 
 bool todo_keydown(App& app, UINT vk) {
@@ -634,11 +642,12 @@ void todo_rename_selected(App& app) {
         app_notify(app, L"图片条目没有文字可改（删了重记或改文件名）");
         return;
     }
+    // 改名框叠在**行内文字区域**上（不是整行）：复选框与缩略图保持可见，文字起点与原文一致
     const D2D1_RECT_F list = todo_list_rect(app.render.client_logical());
     const float top = list.top + t.offsets[static_cast<size_t>(t.sel)] - t.scroll;
-    const D2D1_RECT_F input =
+    const D2D1_RECT_F row =
         D2D1::RectF(list.left, top, list.right, top + todo_row_height(item));
-    const RECT rc = app.render.to_physical(input);
+    const RECT rc = app.render.to_physical(edit_box_rect(todo_row_text_rect(row)));
     const long long id = item.id;
     const std::wstring current = item.text;
     t.edit.open(
@@ -658,7 +667,8 @@ void todo_rename_selected(App& app) {
             todo_rebuild_layout(st, app.render.client_logical());
             ::InvalidateRect(app.panel, nullptr, FALSE);
         },
-        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); });
+        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); },
+        0.f, false);  // pad_x=0：矩形已经就是行内文字区域
 }
 
 void todo_context_menu(App& app, POINT screen_pt, POINT client_pt) {

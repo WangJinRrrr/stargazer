@@ -76,7 +76,10 @@ LRESULT CALLBACK edit_subclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_P
             }
             break;
         case WM_CHAR:
-            if (wp == VK_TAB) return 0;  // Tab 不插字符，留给视图切控件
+            // Enter 在本程序里一律是“提交”，不能落成换行符：
+            // TranslateMessage 已经先于 WM_KEYDOWN 交了这条 WM_CHAR 到队列，
+            // 多行 EDIT 会把它真的插进去 —— 上一句刚把内容清空，下一条就多一个空首行。
+            if (wp == VK_TAB || wp == VK_RETURN || wp == L'\n') return 0;
             break;
         case WM_NCDESTROY:
             ::RemoveWindowSubclass(hwnd, edit_subclass, id);
@@ -100,9 +103,10 @@ HBRUSH edit_bg_brush() {
 
 void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initial, float dpi,
                       std::function<void(const std::wstring&)> commit,
-                      std::function<void()> cancel) {
+                      std::function<void()> cancel, float pad_x, bool center) {
     close();
     parent = parent_wnd;
+    last_rc = rc;
     on_commit = std::move(commit);
     on_cancel = std::move(cancel);
     // 角色相关标志必须在 open 时归零：否则同一个 InlineEdit 被搜索框/重命名框/新建框
@@ -117,7 +121,7 @@ void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initi
                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                          DEFAULT_PITCH | FF_DONTCARE, ui_font_family());
 
-    const DWORD style = WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL |
+    const DWORD style = WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | (center ? ES_CENTER : 0) |
                         (multiline ? (ES_MULTILINE | ES_AUTOVSCROLL) : 0);
     hwnd = ::CreateWindowExW(0, L"EDIT", initial.c_str(), style, rc.left, rc.top,
                              rc.right - rc.left, rc.bottom - rc.top, parent, nullptr,
@@ -132,8 +136,9 @@ void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initi
 
     ::SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     ::SetWindowTheme(hwnd, L"DarkMode_Explorer", nullptr);  // 深色滚动条/插入符
-    // 内边距：与容器里占位文字的 +10 对齐（否则真文字与占位提示会差 8px）
-    const int pad = ::MulDiv(10, static_cast<int>(dpi > 0.f ? dpi : 96.f), 96);
+    // 内边距：默认 10 与容器里占位文字的 +10 对齐；
+    // 改名框传 0 —— 它的矩形已经就是被改的那段文字的位置
+    const int pad = ::MulDiv(static_cast<int>(pad_x), static_cast<int>(dpi > 0.f ? dpi : 96.f), 96);
     ::SendMessageW(hwnd, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(pad, pad));
     if (multiline) {
         // 多行 EDIT 的文字区默认贴着上沿；给一点上边距让它在内框里看着居中
@@ -148,6 +153,7 @@ void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initi
 
 void InlineEdit::set_rect(const RECT& rc) {
     if (hwnd) {
+        last_rc = rc;
         ::SetWindowPos(hwnd, nullptr, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
                        SWP_NOZORDER | SWP_NOACTIVATE);
     }
@@ -184,6 +190,26 @@ void InlineEdit::set_text(const std::wstring& text) {
 
 void InlineEdit::focus() {
     if (hwnd) ::SetFocus(hwnd);
+}
+
+void edit_draw_focus_ring(Renderer& r, const InlineEdit& e) {
+    if (!e.is_open()) return;
+    const D2D1_RECT_F rc = r.to_logical_rect(e.last_rc);
+    // 外扩 1px：画在 EDIT 的矩形之外才看得见（EDIT 是方底且盖在容器上面）。
+    // 圆角与 views/grid.h 的 kRadiusSm(4) 一致。
+    r.stroke_round_rect(
+        D2D1::RectF(rc.left - 1.f, rc.top - 1.f, rc.right + 1.f, rc.bottom + 1.f), 4.f,
+        r.theme.accent, 1.f);
+}
+
+D2D1_RECT_F edit_box_rect(const D2D1_RECT_F& area) {
+    constexpr float kBox = 20.f;
+    if (area.bottom - area.top > 28.f) {
+        // 多行文字行（40）：文字从第一行开始排 → 框也贴顶
+        return D2D1::RectF(area.left, area.top, area.right, area.top + kBox);
+    }
+    const float c = (area.top + area.bottom) / 2.f;
+    return D2D1::RectF(area.left, c - kBox / 2.f, area.right, c + kBox / 2.f);
 }
 
 }  // namespace sg

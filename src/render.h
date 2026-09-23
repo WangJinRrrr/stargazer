@@ -81,6 +81,8 @@ struct Renderer {
     D2D1_SIZE_F client_logical() const;
     // 鼠标消息给的是物理客户区坐标 -> 逻辑 DIP
     D2D1_POINT_2F to_logical(POINT physical) const;
+    // 物理像素矩形 -> 逻辑 DIP 矩形（子 HWND 的聚焦框要用它）
+    D2D1_RECT_F to_logical_rect(const RECT& physical) const;
     // 逻辑 DIP 矩形 -> 物理像素矩形（给子 HWND 用，如 EDIT）
     RECT to_physical(const D2D1_RECT_F& logic) const;
 

@@ -74,6 +74,14 @@ D2D1_RECT_F browse_list_rect(const AppState& s, D2D1_SIZE_F client) {
     return D2D1::RectF(kPad, top, client.width - kPad, client.height - kPad);
 }
 
+// 列表行的名字区域（图标右侧）。渲染与 F2 改名框共用，两边不会错位。
+D2D1_RECT_F browse_row_label_rect(const AppState& s, D2D1_SIZE_F client, int index) {
+    const D2D1_RECT_F list = browse_list_rect(s, client);
+    const float y = list.top + (index - s.browse.scroll) * kBrowseRowH;
+    return D2D1::RectF(list.left + 6.f + kBrowseIcon + 8.f, y, list.right - 6.f,
+                       y + kBrowseRowH - 2.f);
+}
+
 int browse_rows_visible(const AppState& s, D2D1_SIZE_F client) {
     const D2D1_RECT_F list = browse_list_rect(s, client);
     const int rows = static_cast<int>((list.bottom - list.top) / kBrowseRowH);
@@ -325,9 +333,9 @@ void browse_rename_selected(App& app) {
     BrowseState& b = s.browse;
     const int sel = b.sel;
     if (sel < 0 || sel >= static_cast<int>(b.entries.size())) return;
-    const D2D1_RECT_F list = browse_list_rect(s, app.render.client_logical());
-    const float row_top = list.top + (sel - b.scroll) * kBrowseRowH;
-    const D2D1_RECT_F input = D2D1::RectF(list.left, row_top, list.right, row_top + kBrowseRowH);
+    // 改名框叠在**名字区域**上（不是整行）：图标保持可见，文字起点与原名一致
+    const D2D1_RECT_F input =
+        edit_box_rect(browse_row_label_rect(s, app.render.client_logical(), sel));
     const RECT rc = app.render.to_physical(input);
     const std::wstring current = b.entries[static_cast<size_t>(sel)].name;
     const std::wstring dir = b.path;
@@ -360,7 +368,8 @@ void browse_rename_selected(App& app) {
             st.browse.note = L"正在重命名…";
             ::InvalidateRect(app.panel, nullptr, FALSE);
         },
-        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); });
+        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); },
+        0.f, false);  // pad_x=0：矩形已经就是名字区域
 }
 
 void browse_add_to_box(App& app) {
@@ -581,10 +590,11 @@ void browse_render(App& app) {
             r.fill_round_rect(irect, 4.f, ext_color(e.name));  // 骨架先出，图标后到
         }
 
-        const D2D1_RECT_F label =
-            D2D1::RectF(ix + kBrowseIcon + 8.f, y, row.right - 6.f, y + kBrowseRowH - 2.f);
+        const D2D1_RECT_F label = browse_row_label_rect(s, client, i);
         r.text(label, e.name, name_fmt, r.theme.text);
     }
+    // 改名框的聚焦框：画在最后，否则会被行的选中/悬停底盖掉
+    edit_draw_focus_ring(r, b.path_edit);
 }
 
 }  // namespace sg

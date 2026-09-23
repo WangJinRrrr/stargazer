@@ -41,6 +41,8 @@ struct GridLayout {
 
 GridLayout grid_measure(float client_w, float client_h, float top);
 D2D1_RECT_F grid_cell_rect(const GridLayout& gl, int index, int scroll);
+// 格子里的名字区域（图标下方）。渲染与 F2 改名框共用它，两边不会错位。
+D2D1_RECT_F grid_label_rect(const D2D1_RECT_F& cell);
 // 返回 index，未命中返回 -1
 int grid_hittest(const GridLayout& gl, int count, int scroll, D2D1_POINT_2F pt);
 // 滚动夹紧；返回夹紧后的 scroll

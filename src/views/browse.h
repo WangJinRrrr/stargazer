@@ -22,6 +22,8 @@ constexpr float kBrowseIcon = 20.f;   // 行内图标边长
 // 否则提示文字会压在第一条上 —— 命中与渲染共用这一个上沿）
 D2D1_RECT_F browse_path_rect(D2D1_SIZE_F client);
 D2D1_RECT_F browse_list_rect(const AppState& s, D2D1_SIZE_F client);
+// 列表行的名字区域（图标右侧）。渲染与 F2 改名框共用，两边不会错位。
+D2D1_RECT_F browse_row_label_rect(const AppState& s, D2D1_SIZE_F client, int index);
 // 返回可见行下标；未命中返回 -1
 int browse_row_hittest(const AppState& s, D2D1_SIZE_F client, D2D1_POINT_2F pt);
 // 列表最多能显示多少行

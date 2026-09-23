@@ -32,6 +32,13 @@ D2D1_RECT_F box_tab_rect(const AppState& s, D2D1_SIZE_F client, int index) {
     return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 }
 
+// 药丸（分段控件的可见部分）：渲染与改名框共用，上下各内缩 4 让药丸在行内居中
+D2D1_RECT_F box_tab_pill_rect(const AppState& s, D2D1_SIZE_F client, int index) {
+    const D2D1_RECT_F tab = box_tab_rect(s, client, index);
+    const D2D1_RECT_F tr = box_tabs_rect(client);
+    return D2D1::RectF(tab.left, tr.top + 4.f, tab.right, tr.bottom - 4.f);
+}
+
 // CF_UNICODETEXT 的全局内存块。成功后所有权归剪贴板，调用方不得再释放
 
 }  // namespace
@@ -95,19 +102,18 @@ void box_render(App& app) {
     // 药丸在行内垂直居中（高 28），而行高仍是 36（命中/改名框用整行，热区大一点好点）。
     IDWriteTextFormat* tab_fmt = r.format(14.f, DWRITE_FONT_WEIGHT_NORMAL,
                                           DWRITE_TEXT_ALIGNMENT_CENTER);
-    const float pill_top = tr.top + 4.f;
-    const float pill_bottom = tr.bottom - 4.f;
     float x = tr.left;
     float total = 0.f;
     for (size_t i = 0; i < s.boxes.size(); ++i) total += box_tab_width(s.boxes[i].name) + 6.f;
     if (!s.boxes.empty()) {
-        const D2D1_RECT_F tray = D2D1::RectF(tr.left, pill_top, tr.left + total + 2.f, pill_bottom);
+        const D2D1_RECT_F pill0 = box_tab_pill_rect(s, client, 0);
+        const D2D1_RECT_F tray = D2D1::RectF(tr.left, pill0.top, tr.left + total + 2.f, pill0.bottom);
         r.fill_round_rect(tray, kRadiusMd, r.theme.card);
         r.stroke_round_rect(tray, kRadiusMd, r.theme.border, 1.f);
     }
     for (size_t i = 0; i < s.boxes.size(); ++i) {
         const float w = box_tab_width(s.boxes[i].name);
-        const D2D1_RECT_F pill = D2D1::RectF(x, pill_top, x + w, pill_bottom);
+        const D2D1_RECT_F pill = box_tab_pill_rect(s, client, static_cast<int>(i));
         const D2D1_RECT_F tab = D2D1::RectF(x, tr.top, x + w, tr.bottom);
         const bool active = static_cast<int>(i) == s.box_view.box;
         const bool drop = static_cast<int>(i) == s.box_view.drag_over_tab;
@@ -152,6 +158,8 @@ void box_render(App& app) {
         r.text(hint, L"这个盒子还是空的：把文件拖到窗口里就会添加引用", r.format(14.f),
                r.theme.text_faint);
     }
+    // 改名框的聚焦框：画在最后，否则会被格子/标签的底盖掉
+    edit_draw_focus_ring(r, s.box_view.edit);
 }
 
 bool box_keydown(App& app, UINT vk) {
@@ -220,9 +228,8 @@ void box_rename_selected(App& app) {
     auto& items = s.boxes[s.box_view.box].items;
     if (sel < 0 || sel >= static_cast<int>(items.size())) return;
 
-    // 输入框叠在被改的那个格子上；坐标算法与渲染共用同一份
-    const D2D1_RECT_F cr = box_cell_rect(s, app.render.client_logical(), sel);
-    const D2D1_RECT_F input = D2D1::RectF(cr.left, cr.top, cr.right, cr.top + 72.f);
+    // 改名框叠在**名字区域**上（不是整格）：图标保持可见，文字起点与原名一致
+    const D2D1_RECT_F input = edit_box_rect(grid_label_rect(box_cell_rect(s, app.render.client_logical(), sel)));
     const RECT rc = app.render.to_physical(input);
     const int box = s.box_view.box;
     const std::wstring current = items[sel].name;
@@ -240,7 +247,8 @@ void box_rename_selected(App& app) {
             box_clamp(st, app.render.client_logical());
             ::InvalidateRect(app.panel, nullptr, FALSE);
         },
-        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); });
+        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); },
+        0.f, false);  // pad_x=0：矩形已经就是名字区域
 }
 
 void box_add_box(App& app) {
@@ -263,8 +271,10 @@ void box_add_box(App& app) {
 void box_rename_box(App& app, int index) {
     AppState& s = app.state;
     if (index < 0 || index >= static_cast<int>(s.boxes.size())) return;
-    const D2D1_RECT_F tr = box_tab_rect(s, app.render.client_logical(), index);
-    const RECT rc = app.render.to_physical(tr);
+    // 改名框叠在药丸上，并且**居中**：标签文字本来就是居中的，不居中就会一改名就“跳”到左边
+    const D2D1_RECT_F pill =
+        edit_box_rect(box_tab_pill_rect(s, app.render.client_logical(), index));
+    const RECT rc = app.render.to_physical(pill);
     const std::wstring current = s.boxes[index].name;
     s.box_view.edit.open(
         app.panel, rc, current, app.render.dpi,
@@ -278,7 +288,8 @@ void box_rename_box(App& app, int index) {
             }
             ::InvalidateRect(app.panel, nullptr, FALSE);
         },
-        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); });
+        [&app]() { ::InvalidateRect(app.panel, nullptr, FALSE); },
+        0.f, true);  // pad_x=0 + ES_CENTER：文字居中
 }
 
 void box_delete_box(App& app, int index) {
