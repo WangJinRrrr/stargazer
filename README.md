@@ -1,32 +1,30 @@
 # Stargazer
 
-便携式 Windows 桌面效率工具。三个视图均已实现：**文件收纳盒**、**待办**（随手一记）、**浏览**（读本地/网盘目录）。
-
-> 原设计的“启动板”已按用户决定**彻底删除**（代码与 `data\launcher.txt` 一并移除，无迁移、无备份）：
-> 找文件交给“浏览”，归档交给“收纳盒”，两者合起来取代了启动板的位置。
+便携式 Windows 桌面效率工具（Win32 + Direct2D，无第三方依赖，单文件 exe）。
+三个视图：**文件收纳盒**、**待办**（随手一记）、**浏览**（本地/网盘目录）。
 
 ## 构建
 
-要求：Visual Studio（含 C++ 桌面开发工作负载，本机为 VS 18 Community）+ 自带 CMake。
+要求：Visual Studio（含“C++ 桌面开发”工作负载）+ CMake 3.20+。
 
 ```powershell
-$CMAKE = 'D:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
-& $CMAKE -S . -B build -G "Visual Studio 18 2026" -A x64 `
-  "-DCMAKE_GENERATOR_INSTANCE=D:\Program Files\Microsoft Visual Studio\18\Community,version=18.0.0.0"
-& $CMAKE --build build --config Release --target stargazer
+# 生成器名换成你本机 VS 对应的（VS 2022 是 "Visual Studio 17 2022"；本仓库开发机用 VS 18，即 "Visual Studio 18 2026"）
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release --target stargazer
 ```
 
-> 若本机 VS 实例已正确注册在 VS Installer 里，可省掉 `-DCMAKE_GENERATOR_INSTANCE`，并把生成器换成对应版本。
+> 若 VS 实例没注册到 VS Installer（或装了多个版本），再加一个 `-DCMAKE_GENERATOR_INSTANCE="<VS 安装目录>,version=<版本>"`。
 
-产物为 `build\Release\stargazer.exe`，单个文件，静态 CRT，不依赖任何运行时，也不需要 .NET / WebView2。
+产物为 `build\Release\stargazer.exe`：单个文件、静态 CRT（`/MT`），不依赖 VC 运行库、.NET 或 WebView2。
+程序是便携式的：所有数据写在 exe 同级的 `data\` 目录里，没写权限时会明确报错而不是默默丢数据。
 
 ## 测试
 
 ```powershell
-& $CMAKE --build build --config Release --target test_model test_io test_layout
-.\build\Release\test_model.exe
-.\build\Release\test_io.exe
-.\build\Release\test_layout.exe
+cmake --build build --config Release --target test_model test_io test_layout
+.\build\Release\test_model.exe    # 数据层：纯 STL，无 Windows 头
+.\build\Release\test_io.exe       # UTF-8 落盘、可写性探测、CF_HDROP、DIB→PNG
+.\build\Release\test_layout.exe   # 网格与待办不等高行的布局/命中/导航
 ```
 
 `test_model` 覆盖行格式（含 Windows 路径不被误转义的回归）、路径规范化与上一级路径、自然序比较、
@@ -153,8 +151,7 @@ UTF-8 编码、无 BOM，行内 Tab 分隔，字段内 `|` `Tab` `换行` 分别
   `0x8007000E`，面板不会是拖放目标，症状是拖动时光标全程显示“禁止”）—— 踩过一次，记在这里
 - `data\*.txt` 若是非 UTF-8 编码（例如被存成 ANSI），程序会备份成 `.bad` 并重新开始，不会静默改写乱码
 
-## 架构
-
+## 目录结构
 ```
 src/
   main.cpp          入口、单实例、消息循环
@@ -173,9 +170,3 @@ src/
   views/            grid / grid_layout / todo_layout（纯布局，可测）、box（收纳盒）、browse（浏览）、todo（待办）
   model/            纯数据层，不含任何 Windows 头，可被控制台测试
 ```
-
-设计文档：`docs/superpowers/specs/2026-09-22-stargazer-design.md`（总）、
-`docs/superpowers/specs/2026-09-23-stargazer-todo-design.md`（待办）
-实施计划：`docs/superpowers/plans/2026-09-22-stargazer-phase1-kernel-launcher.md`、
-`docs/superpowers/plans/2026-09-22-stargazer-phase2-box.md`、
-`docs/superpowers/plans/2026-09-23-stargazer-todo.md`

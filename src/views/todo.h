@@ -33,7 +33,7 @@ void todo_activate(App& app);
 void todo_leave(App& app);
 void todo_sync_input(App& app);
 
-// --- 条目操作（Task 5 起）---
+// --- 条目操作 ---
 void todo_toggle_done(App& app);
 void todo_open_selected(App& app);
 void todo_delete_selected(App& app);
@@ -43,8 +43,8 @@ void todo_rename_selected(App& app);
 void todo_reveal_selected(App& app);
 void todo_context_menu(App& app, POINT screen_pt, POINT client_pt);
 
-// --- 输入流水线（Task 6 起）---
-// Task 6 的输入流水线（实现见下方）
+// --- 输入流水线 ---
+// 输入流水线（实现见下方）
 bool todo_add_from_clipboard(App& app);
 bool todo_add_from_paths(App& app, const std::vector<std::wstring>& paths);
 void todo_add_text(App& app, const std::wstring& text);

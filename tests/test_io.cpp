@@ -43,7 +43,7 @@ static std::wstring temp_dir() {
     return d;
 }
 
-// Review Focus 3：中文与特殊字符经 UTF-8 落盘再读回必须一致
+// 中文与特殊字符经 UTF-8 落盘再读回必须一致
 static void test_roundtrip_utf8() {
     const std::wstring dir = temp_dir();
     const std::wstring file = sg::join_path(dir, L"中文名字.txt");
@@ -73,7 +73,7 @@ static void test_read_missing_file() {
     CHECK(!sg::read_file_utf8(sg::join_path(temp_dir(), L"不存在.txt"), out));
 }
 
-// Review Focus 1：不可写目录必须被探测出来
+// 不可写目录必须被探测出来
 static void test_dir_writable_probe() {
     const std::wstring dir = temp_dir();
     CHECK(sg::dir_writable(dir));
@@ -161,7 +161,7 @@ static std::vector<uint8_t> make_dib(int w, int h, int bpp, bool top_down) {
     return dib;
 }
 
-// Review Focus 1：四种位图变体都要能编出“能看”的 PNG（不黑块、不上下颠倒、不负片）
+// 四种位图变体都要能编出“能看”的 PNG（不黑块、不上下颠倒、不负片）
 static void test_png_encode_dib() {
     const std::wstring dir = temp_dir();
     const struct { int bpp; bool top_down; const wchar_t* name; } cases[] = {

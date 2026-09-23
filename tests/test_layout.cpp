@@ -27,7 +27,7 @@ static int g_failed = 0;
         }                                                                      \
     } while (0)
 
-// 回归（代码评审 Important 1）：命中不能超出“画得出来”的行。
+// 命中不能超出“画得出来”的行。
 // 网格区下方那条不足一行的空隙里没有任何格子，点它必须返回 -1；
 // 否则 Enter / 双击会启动一个用户根本看不见的条目。
 static void test_hittest_stops_at_last_visible_row() {

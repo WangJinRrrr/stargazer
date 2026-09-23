@@ -78,7 +78,7 @@ void app_show(App& app);
 void app_hide(App& app);
 void app_toggle(App& app);
 void app_shutdown(App& app);
-// 非致命提示（托盘气泡）。视图层用它报错，不弹模态框（spec §12）
+// 非致命提示（托盘气泡）。视图层用它报错，不弹模态框
 void app_notify(App& app, const std::wstring& text);
 // 投递一次存在性校验：当前盒子的条目 + 待办里的引用型图片。
 // 结果按 path 一次回填 boxes 与 todos（fs_work 的回调是单槽设计，不能变成两个消费者）。

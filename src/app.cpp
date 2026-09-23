@@ -255,7 +255,7 @@ bool ensure_panel(App& app) {
     dragdrop_set_drag_flag(&app.in_drag);
     if (!dragdrop_init(app.panel)) {
         // 静默失败会表现为“拖动时光标全程禁止”而完全看不出原因（真的踩过），
-        // 所以至少要让用户知道有东西坏了（spec §12：用气泡不用弹框）
+        // 所以至少要让用户知道有东西坏了（用气泡不用弹框）
         tray_balloon(app, L"Stargazer", L"拖放初始化失败：往窗口里拖文件将不会被接受。");
     }
     dragdrop_set_hook([&app](const std::vector<std::wstring>& paths) {
@@ -849,7 +849,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 app->state.box_view.scroll = 0;
                 box_clamp(app->state, cs);
                 // 换盒子必须重校验：否则上一个盒子的失效标记会留着，
-                // 文件已经恢复的条目仍是灰色，一键清理会误删这条活引用（代码评审 Important 3）
+                // 文件已经恢复的条目仍是灰色，一键清理会误删这条活引用
                 box_request_check(*app);
                 ::InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
@@ -1082,7 +1082,7 @@ void app_save_if_dirty(App& app) {
     AppState& s = app.state;
     if (!s.data_dirty) return;
     s.data_dirty = false;
-    // 分开写：一个文件写失败不该让另一个文件连尝试都没有（评审 minor）
+    // 分开写：一个文件写失败不该让另一个文件连尝试都没有
     const bool box_ok = save_text(app.paths, L"boxes.txt", serialize_boxes(s.boxes));
     const bool todo_ok = save_text(app.paths, L"todo.txt", serialize_todos(s.todos));
     if (!box_ok || !todo_ok) {
@@ -1299,7 +1299,7 @@ bool app_init(App& app, HINSTANCE inst) {
     app.inst = inst;
     apply_dark_app_mode();
 
-    // Review Focus 1：数据目录不可写时明确告知并退出，不静默丢数据
+    // 数据目录不可写时明确告知并退出，不静默丢数据
     if (!init_paths(app.paths)) {
         ::MessageBoxW(nullptr, L"无法定位程序所在目录。", L"Stargazer", MB_ICONERROR);
         return false;

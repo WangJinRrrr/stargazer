@@ -149,7 +149,7 @@ void box_render(App& app) {
         gi.is_dir = !gi.icon_src.empty() && gi.icon_src.back() == L'\\';
         gi.selected = static_cast<int>(i) == s.box_view.sel;
         gi.hovered = static_cast<int>(i) == s.box_view.hover;
-        gi.missing = items[i].missing;  // Task 4 才会填
+        gi.missing = items[i].missing;  // 存在性校验的结果（呼出时由工作线程回填）
         cells.push_back(std::move(gi));
     }
     grid_render(r, box_layout(client), cells, s.box_view.scroll);

@@ -29,7 +29,7 @@ static int g_failed = 0;
         }                                                                  \
     } while (0)
 
-// Review Focus 3：含制表符、换行、反斜杠、emoji、中文的文件名必须逐字节还原
+// 含制表符、换行、反斜杠、emoji、中文的文件名必须逐字节还原
 static void test_field_roundtrip() {
     const std::wstring cases[] = {
         L"",
@@ -77,7 +77,7 @@ static void test_row_roundtrip() {
     CHECK(back == row);
 }
 
-// Review Focus 2：字段数不对的行跳过并计数，不使整份文件失败
+// 字段数不对的行跳过并计数，不使整份文件失败
 static void test_bad_row_skipped() {
     const std::wstring text = L"a\tb\tc\nd\te\nf\tg\th\n";
     int bad = 0;
@@ -145,7 +145,7 @@ static void test_natural_compare() {
     CHECK(sg::natural_compare(L"x", L"x") == 0);
 }
 
-// Review Focus 2（盒子的坏行处理）：混入坏行后其余记录照常加载 —— 在 test_boxes_ghost_lines 里覆盖。
+// 混入坏行后其余记录照常加载 —— 在 test_boxes_ghost_lines 里覆盖。
 static void test_boxes_roundtrip() {
     std::vector<sg::Box> boxes(1);
     boxes[0].name = L"待归档";
@@ -203,7 +203,7 @@ static void test_boxes_ghost_lines() {
     }
 }
 
-// 拖入分发（Review Focus 5）：同一路径允许重复添加，不自动去重；
+// 拖入分发：同一路径允许重复添加，不自动去重；
 // 重复添加后每条都能单独删除（按条删，不按路径删），不会产生删不掉的项。
 static void test_box_add_paths() {
     // ① boxes 为空时先建盒子（拖到空界面也应能用）
@@ -259,7 +259,7 @@ static void test_box_move_item() {
     CHECK_EQ(boxes[1].items.size(), size_t{1});
 }
 
-// 回归（代码评审 Important 2）：改名不能造出重名盒子 —— parse_boxes 对同名盒子是“合并”，
+// 改名不能造出重名盒子 —— parse_boxes 对同名盒子是“合并”，
 // 允许重名会在下次启动时静默把两个盒子并成一个（组织关系丢了）。
 static void test_box_name_taken() {
     std::vector<sg::Box> boxes(2);
@@ -314,7 +314,7 @@ static void test_new_folder_name() {
     CHECK(!sg::name_taken({ L"1" }, L"01"));
 }
 
-// Review Focus 2/5：类型判定、转义往返、稳定排序、副本归属
+// 类型判定、转义往返、稳定排序、副本归属
 static void test_todo_kind() {
     CHECK(sg::todo_kind_from_text(L"https://example.com") == sg::TodoKind::Link);
     CHECK(sg::todo_kind_from_text(L"  HTTP://EXAMPLE.COM  ") == sg::TodoKind::Link);  // 空白 + 大小写
@@ -405,7 +405,7 @@ static void test_todo_sort() {
     CHECK_EQ(sg::next_todo_id(empty), 1LL);
 }
 
-// Review Focus 3：副本归属与“还有别的引用吗”
+// 副本归属与“还有别的引用吗”
 static void test_todo_copy_ownership() {
     const std::wstring images = L"D:\\Tools\\stargazer\\data\\images";
     CHECK(sg::todo_is_owned_copy(images, L"D:\\Tools\\stargazer\\data\\images\\7.png"));

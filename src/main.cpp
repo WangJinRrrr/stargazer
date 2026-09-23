@@ -33,7 +33,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     // per-monitor-v2：多显示器不同缩放时不糊
     ::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-    // Review Focus 5：已有实例时唤出它并退出自己，绝不启动第二个进程
+    // 已有实例时唤出它并退出自己，绝不启动第二个进程
     HANDLE once = ::CreateMutexW(nullptr, TRUE, L"Local\\stargazer-singleton");
     if (once && ::GetLastError() == ERROR_ALREADY_EXISTS) {
         // 找控制窗口而不是面板：面板可能还没建（懒加载）。

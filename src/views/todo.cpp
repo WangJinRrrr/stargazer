@@ -399,7 +399,7 @@ void todo_leave(App& app) {
 }
 
 void todo_add_text(App& app, const std::wstring& text) {
-    // Task 4 就需要它：底部输入框的回车要能真的记一条（剪贴板/拖入/图片在 Task 6）
+    // 底部输入框的回车走它；剪贴板 / 拖入 / 图片最终也汇到这里
     AppState& s = app.state;
     if (text.empty()) return;
     TodoItem item;
@@ -416,7 +416,7 @@ void todo_add_text(App& app, const std::wstring& text) {
     ::InvalidateRect(app.panel, nullptr, FALSE);
 }
 
-// Task 6：真正的输入流水线
+// 输入流水线：回车提交 / 剪贴板 / 拖入 / 图片落盘
 bool todo_add_from_clipboard(App& app) {
     // 1) 文件（CF_HDROP）：逐个看，是图片的各记一条引用
     bool move = false;
@@ -437,7 +437,7 @@ bool todo_add_from_clipboard(App& app) {
         return true;
     }
     // 2) 文本优先于位图：Excel/Word 复制时剪贴板里同时有文本和位图，
-    //    按“位图优先”会把一个单元格变成一张图（Review Focus 2）
+    //    按“位图优先”会把一个单元格变成一张图
     std::wstring text;
     if (clipboard_get_text(text) && !trim(text).empty()) {
         todo_add_text(app, text);
