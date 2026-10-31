@@ -34,6 +34,7 @@ bool read_hdrop(IDataObject* obj, std::vector<std::wstring>& out) {
 
 class DropTarget : public IDropTarget {
 public:
+    virtual ~DropTarget() = default;
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
         if (!out) return E_POINTER;
         if (iid == IID_IUnknown || iid == IID_IDropTarget) {
@@ -87,6 +88,7 @@ DropTarget* g_target = nullptr;
 class HdropDataObject : public IDataObject {
 public:
     explicit HdropDataObject(HGLOBAL hdrop) : hdrop_(hdrop) {}
+    virtual ~HdropDataObject() = default;
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
         if (!out) return E_POINTER;
@@ -152,6 +154,7 @@ private:
 // 拖出的源：只关心左键是否松开与 Esc 是否按下（其余交给系统默认光标反馈）
 class DropSource : public IDropSource {
 public:
+    virtual ~DropSource() = default;
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
         if (!out) return E_POINTER;
         if (iid == IID_IUnknown || iid == IID_IDropSource) {

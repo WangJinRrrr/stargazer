@@ -3,7 +3,6 @@
 #include <vector>
 
 #include "model/bgra.h"
-#include "model/dirlist.h"
 #include "model/paths.h"
 #include "model/rowformat.h"
 #include "model/search.h"
@@ -286,30 +285,33 @@ static void test_box_move_within() {
     CHECK_EQ(box.items[0].name, std::wstring(L"n4"));
 }
 
-// 筛选：只留下名字含着筛选词的项，且不动顺序（目录在前的分组也原样保留）
-static void test_filter_dir_entries() {
-    std::vector<sg::DirEntry> all{
-        { L"Docs", true },  { L"readme.txt", false }, { L"Report.PDF", false },
-        { L"img10.png", false }, { L"img2.png", false },
-    };
-
-    CHECK_EQ(sg::filter_dir_entries(all, L"").size(), all.size());  // 空词 = 原样
-
-    const auto rep = sg::filter_dir_entries(all, L"rep");           // 大小写不敏感
-    CHECK_EQ(rep.size(), size_t{1});
-    CHECK_EQ(rep[0].name, std::wstring(L"Report.PDF"));
-
-    const auto img = sg::filter_dir_entries(all, L"img");            // 顺序不变
-    CHECK_EQ(img.size(), size_t{2});
-    CHECK_EQ(img[0].name, std::wstring(L"img10.png"));
-    CHECK_EQ(img[1].name, std::wstring(L"img2.png"));
-
-    CHECK_EQ(sg::filter_dir_entries(all, L"zzz").size(), size_t{0});
-    CHECK_EQ(sg::filter_dir_entries(all, L"docs")[0].is_dir, true);  // 目录不会被筛掉
-}
-
 // 改名不能造出重名盒子 —— parse_boxes 对同名盒子是“合并”，
 // 允许重名会在下次启动时静默把两个盒子并成一个（组织关系丢了）。
+
+// 筛选返回的是真实下标，顺序不变。打开/删除用这个下标，不会指到被藏起来的条目。
+static void test_box_visible() {
+    std::vector<sg::BoxItem> items = {
+        { L"季度报告", L"D:\\docs\\Report.PDF" },
+        { L"备忘", L"D:\\docs\\notes.txt" },
+        { L"封面", L"D:\\img\\cover.png" },
+    };
+    CHECK_EQ(sg::box_visible(items, L"").size(), size_t{3});
+    const auto rep = sg::box_visible(items, L"rep");  // 文件名，大小写不敏感
+    CHECK_EQ(rep.size(), size_t{1});
+    CHECK_EQ(rep[0], 0);
+    const auto by_name = sg::box_visible(items, L"备忘");
+    CHECK_EQ(by_name.size(), size_t{1});
+    CHECK_EQ(by_name[0], 1);
+    CHECK_EQ(sg::box_visible(items, L"zzz").size(), size_t{0});
+    // 显示名（季度报告）和文件名（cover.png）都能命中，顺序保持原样
+    const auto by_display = sg::box_visible(items, L"报告");
+    CHECK_EQ(by_display.size(), size_t{1});
+    CHECK_EQ(by_display[0], 0);
+    const auto by_file = sg::box_visible(items, L"cov");
+    CHECK_EQ(by_file.size(), size_t{1});
+    CHECK_EQ(by_file[0], 2);
+}
+
 static void test_box_name_taken() {
     std::vector<sg::Box> boxes(2);
     boxes[0].name = L"A";
@@ -318,24 +320,6 @@ static void test_box_name_taken() {
     CHECK(!sg::box_name_taken(boxes, L"A", 0));  // 改的就是自己：不算冲突
     CHECK(!sg::box_name_taken(boxes, L"C", 0));
     CHECK(!sg::box_name_taken(boxes, L"", 0));   // 空名不算占用（调用方本来就拒绝空名）
-}
-
-// 浏览视图的纯逻辑：目录优先 + 自然序、上一级路径、新建文件夹命名
-static void test_dirlist_sort_and_names() {
-    using sg::DirEntry;
-    std::vector<DirEntry> e = {
-        { L"10.txt", false }, { L"2.txt", false }, { L"1.txt", false },
-        { L"b_folder", true }, { L"a_folder", true },  { L"A.txt", false },
-    };
-    sg::sort_dir_entries(e);
-    CHECK_EQ(e.size(), size_t{6});
-    // 目录在前（按自然序），文件在后（自然序：数字按值比较）
-    CHECK_EQ(e[0].name, std::wstring(L"a_folder"));
-    CHECK_EQ(e[1].name, std::wstring(L"b_folder"));
-    CHECK_EQ(e[2].name, std::wstring(L"1.txt"));
-    CHECK_EQ(e[3].name, std::wstring(L"2.txt"));
-    CHECK_EQ(e[4].name, std::wstring(L"10.txt"));
-    CHECK_EQ(e[5].name, std::wstring(L"A.txt"));
 }
 
 static void test_parent_path() {
@@ -350,148 +334,6 @@ static void test_parent_path() {
     CHECK_EQ(sg::append_name(L"C:\\a", L"b"), std::wstring(L"C:\\a\\b"));
     CHECK_EQ(sg::append_name(L"C:\\a\\", L"b"), std::wstring(L"C:\\a\\b"));
     CHECK_EQ(sg::append_name(L"", L"b"), std::wstring(L"b"));
-}
-
-static void test_new_folder_name() {
-    CHECK_EQ(sg::new_folder_name({}), std::wstring(L"新建文件夹"));
-    CHECK_EQ(sg::new_folder_name({ L"新建文件夹" }), std::wstring(L"新建文件夹 (2)"));
-    CHECK_EQ(sg::new_folder_name({ L"新建文件夹", L"新建文件夹 (2)" }),
-             std::wstring(L"新建文件夹 (3)"));
-    CHECK_EQ(sg::new_folder_name({ L"其它" }), std::wstring(L"新建文件夹"));
-    // 重名判定大小写不敏感，但 "1" 与 "01" 不是同一个名字
-    CHECK(sg::name_taken({ L"Readme.txt" }, L"README.TXT"));
-    CHECK(!sg::name_taken({ L"1" }, L"01"));
-}
-
-// 类型判定、转义往返、稳定排序、副本归属
-static void test_todo_kind() {
-    CHECK(sg::todo_kind_from_text(L"https://example.com") == sg::TodoKind::Link);
-    CHECK(sg::todo_kind_from_text(L"  HTTP://EXAMPLE.COM  ") == sg::TodoKind::Link);  // 空白 + 大小写
-    CHECK(sg::todo_kind_from_text(L"http://") == sg::TodoKind::Link);
-    CHECK(sg::todo_kind_from_text(L"www.example.com") == sg::TodoKind::Text);  // 不是链接
-    CHECK(sg::todo_kind_from_text(L"ftp://x") == sg::TodoKind::Text);          // 不是链接
-    CHECK(sg::todo_kind_from_text(L"买牛奶\n第二行") == sg::TodoKind::Text);
-    // 多行粘贴里“链接 + 后面还有字”不是链接（否则会把一整块交给浏览器）
-    CHECK(sg::todo_kind_from_text(L"https://x\n第二行") == sg::TodoKind::Text);
-    CHECK(sg::todo_kind_from_text(L"https://x y") == sg::TodoKind::Text);
-    CHECK(sg::todo_kind_from_text(L"") == sg::TodoKind::Text);
-
-    CHECK(sg::is_image_path(L"C:\\a\\b.PNG"));
-    CHECK(sg::is_image_path(L"D:/x/y.jpeg"));
-    CHECK(sg::is_image_path(L"shot.webp"));
-    CHECK(!sg::is_image_path(L"C:\\a\\b.txt"));
-    CHECK(!sg::is_image_path(L"C:\\a\\b"));    // 无扩展名
-    CHECK(!sg::is_image_path(L"C:\\pics\\"));  // 目录
-
-    // 未知 kind 值 → Text（宽松原则：不丢内容）
-    CHECK(sg::todo_kind_from_string(L"foo") == sg::TodoKind::Text);
-    CHECK(sg::todo_kind_from_string(L"image") == sg::TodoKind::Image);
-    CHECK_EQ(sg::todo_kind_to_string(sg::TodoKind::Link), std::wstring(L"link"));
-}
-
-static void test_todo_roundtrip() {
-    std::vector<sg::TodoItem> todos(3);
-    todos[0].id = 1; todos[0].created = 100; todos[0].kind = sg::TodoKind::Text;
-    todos[0].text = L"买牛奶 |t 与 |n 与 ||";  // 转义三件套
-    todos[1].id = 2; todos[1].created = 200; todos[1].kind = sg::TodoKind::Link;
-    todos[1].text = L"https://example.com/a?b=1";
-    todos[2].id = 3; todos[2].created = 300; todos[2].done = true;
-    todos[2].kind = sg::TodoKind::Image;
-    todos[2].attach = L"C:\\Users\\wjr\\AppData\\Local\\Temp\\sg\\images\\3.png";
-
-    int bad = 0;
-    auto back = sg::parse_todos(sg::serialize_todos(todos), bad);
-    CHECK_EQ(bad, 0);
-    CHECK_EQ(back.size(), size_t{3});
-    CHECK_EQ(back[0].text, std::wstring(L"买牛奶 |t 与 |n 与 ||"));
-    CHECK(back[1].kind == sg::TodoKind::Link);
-    CHECK(back[2].kind == sg::TodoKind::Image);
-    CHECK(back[2].done);
-    CHECK_EQ(back[2].attach, todos[2].attach);
-
-    // 空 kind + 空 text + 空 attach 的行 = 坏行（不产生幽灵条目）
-    // 注：parse_rows 每次调用会把 bad 重置为 0（既有 API 语义），所以这里每次用新的计数器
-    int bad_a = 0;
-    auto back2 = sg::parse_todos(L"9\t0\t1\t\t\t\n", bad_a);
-    CHECK_EQ(bad_a, 1);
-    CHECK_EQ(back2.size(), size_t{0});
-    // 字段数不对的行也是坏行
-    int bad_b = 0;
-    auto back3 = sg::parse_todos(L"9\t0\t1\ttext\n", bad_b);
-    CHECK_EQ(bad_b, 1);
-    CHECK_EQ(back3.size(), size_t{0});
-    // 非数字的 created（手改）→ 当作 0，不崩、不丢条目
-    int bad_c = 0;
-    auto back4 = sg::parse_todos(L"9\t0\tabc\ttext\t中文\t\n", bad_c);
-    CHECK_EQ(bad_c, 0);
-    CHECK_EQ(back4.size(), size_t{1});
-    CHECK_EQ(back4[0].created, 0LL);
-    CHECK_EQ(back4[0].text, std::wstring(L"中文"));
-}
-
-static void test_todo_sort() {
-    std::vector<sg::TodoItem> t(4);
-    t[0].id = 1; t[0].created = 100; t[0].text = L"old";
-    t[1].id = 2; t[1].created = 300; t[1].text = L"new";
-    t[2].id = 3; t[2].created = 200; t[2].text = L"mid";
-    t[3].id = 4; t[3].created = 999; t[3].done = true; t[3].text = L"done-newest";
-    sg::sort_todos(t);
-    CHECK_EQ(t[0].text, std::wstring(L"new"));
-    CHECK_EQ(t[1].text, std::wstring(L"mid"));
-    CHECK_EQ(t[2].text, std::wstring(L"old"));
-    CHECK_EQ(t[3].text, std::wstring(L"done-newest"));  // 已完成沉底，哪怕 created 最大
-
-    // 同一秒连记多条：id 大的在前（稳定，不随排序实现漂移）
-    std::vector<sg::TodoItem> same(3);
-    for (int i = 0; i < 3; ++i) { same[i].id = i + 1; same[i].created = 500; }
-    sg::sort_todos(same);
-    CHECK_EQ(same[0].id, 3);
-    CHECK_EQ(same[1].id, 2);
-    CHECK_EQ(same[2].id, 1);
-
-    std::vector<sg::TodoItem> empty;
-    sg::sort_todos(empty);  // 空列表不崩
-    CHECK_EQ(sg::next_todo_id(empty), 1LL);
-}
-
-// 副本归属与“还有别的引用吗”
-static void test_todo_copy_ownership() {
-    const std::wstring images = L"D:\\Tools\\stargazer\\data\\images";
-    CHECK(sg::todo_is_owned_copy(images, L"D:\\Tools\\stargazer\\data\\images\\7.png"));
-    CHECK(sg::todo_is_owned_copy(images, L"d:\\tools\\stargazer\\DATA\\IMAGES\\7.png"));   // 大小写
-    CHECK(!sg::todo_is_owned_copy(images, L"D:\\Tools\\stargazer\\data\\images2\\7.png"));  // 前缀不算
-    CHECK(!sg::todo_is_owned_copy(images, L"D:\\Tools\\other\\7.png"));
-    CHECK(!sg::todo_is_owned_copy(images, L"D:\\Tools\\stargazer\\data\\images"));  // 目录本身
-    CHECK(!sg::todo_is_owned_copy(images, L""));
-
-    const std::wstring p = L"D:\\Tools\\stargazer\\data\\images\\7.png";
-    CHECK(sg::todo_copy_still_used({ p, L"C:\\other.png" }, p));  // 还有别人在用
-    CHECK(sg::todo_copy_still_used({ L"D:\\TOOLS\\STARGAZER\\DATA\\IMAGES\\7.PNG" }, p));  // 大小写
-    CHECK(!sg::todo_copy_still_used({ L"C:\\other.png" }, p));  // 没人用了
-    CHECK(!sg::todo_copy_still_used({}, p));
-}
-
-static void test_todos_roundtrip_and_sort() {
-    std::vector<sg::TodoItem> todos;
-    todos.push_back({ 1, false, 100, sg::TodoKind::Text, L"普通", L"" });
-    todos.push_back({ 2, false, 200, sg::TodoKind::Text, L"旧的", L"" });
-    todos.push_back({ 3, false, 300, sg::TodoKind::Text, L"新的", L"" });
-    todos.push_back({ 4, true, 400, sg::TodoKind::Text, L"已完成", L"" });
-
-    int bad = 0;
-    auto back = sg::parse_todos(sg::serialize_todos(todos), bad);
-    CHECK_EQ(bad, 0);
-    CHECK_EQ(back.size(), size_t{4});
-
-    sg::sort_todos(back);
-    CHECK_EQ(back[0].text, std::wstring(L"新的"));
-    CHECK_EQ(back[1].text, std::wstring(L"旧的"));
-    CHECK_EQ(back[2].text, std::wstring(L"普通"));
-    CHECK_EQ(back[3].text, std::wstring(L"已完成"));
-    CHECK_EQ(back[3].done, true);
-
-    CHECK_EQ(sg::next_todo_id(back), 5LL);
-    CHECK_EQ(sg::next_todo_id(std::vector<sg::TodoItem>{}), 1LL);
 }
 
 static void test_config() {
@@ -555,16 +397,9 @@ int main() {
     test_box_add_paths();
     test_box_move_item();
     test_box_move_within();
-    test_filter_dir_entries();
+    test_box_visible();
     test_box_name_taken();
-    test_dirlist_sort_and_names();
     test_parent_path();
-    test_new_folder_name();
-    test_todos_roundtrip_and_sort();
-    test_todo_kind();
-    test_todo_roundtrip();
-    test_todo_sort();
-    test_todo_copy_ownership();
     test_config();
     test_premultiply_bgra();
 

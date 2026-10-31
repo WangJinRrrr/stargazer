@@ -4,8 +4,6 @@
 #include <utility>
 #include <vector>
 
-#include "model/todo_kind.h"
-
 namespace sg {
 
 struct BoxItem {
@@ -18,17 +16,6 @@ struct BoxItem {
 struct Box {
     std::wstring name;
     std::vector<BoxItem> items;
-};
-
-struct TodoItem {
-    long long id = 0;
-    bool done = false;
-    long long created = 0;  // Unix 秒
-    TodoKind kind = TodoKind::Text;
-    std::wstring text;    // 文字内容；link 时是 URL；image 时可为空
-    std::wstring attach;  // image 时的图片来源路径，其余为空
-    // 失效标记（仅 image 的引用型用）：运行期状态，由存在性校验回填，**不参与序列化**
-    bool missing = false;
 };
 
 using Config = std::vector<std::pair<std::wstring, std::wstring>>;
@@ -57,10 +44,10 @@ bool box_move_within(Box& box, int from, int to);
 // 改名必须用它拦重名：同名盒子在 parse 时会被合并，等于静默丢一个盒子的组织结构。
 bool box_name_taken(const std::vector<Box>& boxes, const std::wstring& name, int except_index);
 
-// 行格式：id \t done \t created \t due \t prio \t text
-// 行格式：id \t done \t created \t kind \t text \t attach
-std::wstring serialize_todos(const std::vector<TodoItem>& todos);
-std::vector<TodoItem> parse_todos(const std::wstring& text, int& bad);
+// 当前盒子里“看得见”的条目下标（真实下标，不是一份拷贝）。
+// needle 为空时按原顺序返回全部；否则留下显示名或文件名里含它的项。
+// 打开 / 删除 / 换位置都拿这个下标回去，避免筛选后再用“看得见的序号”指错条目。
+std::vector<int> box_visible(const std::vector<BoxItem>& items, const std::wstring& needle);
 
 // 行格式：key \t value
 std::wstring serialize_config(const Config& kv);
@@ -68,11 +55,5 @@ Config parse_config(const std::wstring& text, int& bad);
 
 std::wstring config_get(const Config& kv, const std::wstring& key, const std::wstring& def);
 void config_set(Config& kv, const std::wstring& key, const std::wstring& value);
-
-// 未完成在上：prio 降序 -> created 降序；已完成全部沉底（同样按 prio/create 排）
-void sort_todos(std::vector<TodoItem>& todos);
-
-// 空列表返回 1
-long long next_todo_id(const std::vector<TodoItem>& todos);
 
 }  // namespace sg

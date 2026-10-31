@@ -1,10 +1,10 @@
 #include "model/store.h"
 
 #include <algorithm>
-#include <cwchar>
 
-#include "model/paths.h"  // file_name（拖入时的显示名）
+#include "model/paths.h"   // file_name（拖入时的显示名，筛选也认它）
 #include "model/rowformat.h"
+#include "model/search.h"  // contains_ci
 
 namespace sg {
 
@@ -95,39 +95,16 @@ bool box_name_taken(const std::vector<Box>& boxes, const std::wstring& name, int
     return false;
 }
 
-static long long to_ll(const std::wstring& s) {
-    return static_cast<long long>(std::wcstoll(s.c_str(), nullptr, 10));
-}
-
-std::wstring serialize_todos(const std::vector<TodoItem>& todos) {
-    std::vector<std::vector<std::wstring>> rows;
-    for (const auto& t : todos) {
-        rows.push_back({ std::to_wstring(t.id), t.done ? L"1" : L"0",
-                         std::to_wstring(t.created), todo_kind_to_string(t.kind), t.text,
-                         t.attach });
-    }
-    return build_text(rows);
-}
-
-std::vector<TodoItem> parse_todos(const std::wstring& text, int& bad) {
-    const auto rows = parse_rows(text, 6, bad);
-    std::vector<TodoItem> todos;
-    for (const auto& r : rows) {
-        // 空 kind + 空 text + 空 attach = 占位/坏行，不产生幽灵条目
-        if (r[3].empty() && r[4].empty() && r[5].empty()) {
-            ++bad;
-            continue;
+std::vector<int> box_visible(const std::vector<BoxItem>& items, const std::wstring& needle) {
+    std::vector<int> out;
+    out.reserve(items.size());
+    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+        if (needle.empty() || contains_ci(items[i].name, needle) ||
+            contains_ci(file_name(items[i].path), needle)) {
+            out.push_back(i);
         }
-        TodoItem t;
-        t.id = to_ll(r[0]);
-        t.done = (r[1] == L"1");
-        t.created = to_ll(r[2]);
-        t.kind = todo_kind_from_string(r[3]);
-        t.text = r[4];
-        t.attach = r[5];
-        todos.push_back(std::move(t));
     }
-    return todos;
+    return out;
 }
 
 std::wstring serialize_config(const Config& kv) {
@@ -158,22 +135,6 @@ void config_set(Config& kv, const std::wstring& key, const std::wstring& value) 
         }
     }
     kv.emplace_back(key, value);
-}
-
-void sort_todos(std::vector<TodoItem>& todos) {
-    std::stable_sort(todos.begin(), todos.end(), [](const TodoItem& a, const TodoItem& b) {
-        if (a.done != b.done) return !a.done;  // 未完成在前
-        if (a.created != b.created) return a.created > b.created;  // 新的在前
-        return a.id > b.id;  // 同一秒连记多条：id 大的在前（不随排序实现漂移）
-    });
-}
-
-long long next_todo_id(const std::vector<TodoItem>& todos) {
-    long long max_id = 0;
-    for (const auto& t : todos) {
-        if (t.id > max_id) max_id = t.id;
-    }
-    return max_id + 1;
 }
 
 }  // namespace sg

@@ -3,51 +3,39 @@
 #include <windows.h>
 #include <d2d1.h>
 
+#include <string>
+#include <vector>
+
 #include "viewapi.h"
-#include "views/grid.h"
 
 namespace sg {
 
 struct App;
 
-// 盒子标签行（位于顶层视图标签行之下的逻辑 DIP 矩形）
-D2D1_RECT_F box_tabs_rect(D2D1_SIZE_F client);
-// 返回盒子下标，未命中 -1
-int box_tab_hittest(const AppState& s, D2D1_SIZE_F client, D2D1_POINT_2F pt);
-
-// 网格区域：Box 没有搜索框，网格紧贴盒子标签行
-GridLayout box_layout(D2D1_SIZE_F client);
-
-// 夹紧 box/sel/scroll（Box 无过滤，只需要夹紧）
-void box_clamp(AppState& s, D2D1_SIZE_F client);
-// 当前盒子里第 index 个格子的矩形
-D2D1_RECT_F box_cell_rect(const AppState& s, D2D1_SIZE_F client, int index);
-
-// 返回当前盒子的格子下标，未命中 -1
-int box_hittest(App& app, D2D1_POINT_2F pt);
-
 void box_render(App& app);
-// 返回 true 表示按键已被消费
+// 返回 true 表示按键已被消费（Esc 清掉筛选时也算消费，调用方就不要收起窗口）
 bool box_keydown(App& app, UINT vk);
-// 输入即跳（Explorer 的 type-ahead）：在网格里打字直接跳到第一个名字含它的条目。
-// 盒子条目是手挑的几十条，跳过去比“藏条目的筛选框”直接，也不用多一层下标映射
-void box_typeahead(App& app, wchar_t ch);
-
-// 呼出时投递当前盒子的存在性校验（工作线程 B）；结果在 UI 线程按 path 回填
-void box_request_check(App& app);
-// 清理当前盒子里的失效条目（只删引用，**绝不碰磁盘**）
-void box_clear_missing(App& app);
-
-// --- 条目与盒子管理（都只动引用，永不碰磁盘上的文件）---
-void box_delete_selected(App& app);
-void box_rename_selected(App& app);
-void box_add_box(App& app);
-void box_rename_box(App& app, int index);
-void box_delete_box(App& app, int index);
-void box_copy_selected(App& app);  // Ctrl+C：同时给 CF_HDROP 与 CF_UNICODETEXT
-void box_open_selected(App& app);
-
-// 右键菜单：命中用客户区坐标（逻辑 DIP），弹菜单用屏幕坐标
+// 面板收到字符：把输入送进筛选框（筛选词看得见，不再做无提示的“输入即跳”）
+void box_char(App& app, wchar_t ch);
+void box_mouse_move(App& app, POINT phys);
+void box_lbutton_down(App& app, POINT phys);
+void box_lbutton_up(App& app, POINT phys);
+void box_lbutton_dblclk(App& app, POINT phys);
+void box_mouse_leave(App& app);
+void box_mouse_wheel(App& app, int step, POINT screen);
+void box_size(App& app);
 void box_context_menu(App& app, POINT screen_pt, POINT client_pt);
+// 筛选框 EN_CHANGE
+void box_search_changed(App& app);
+// 悬停淡入淡出。返回 true 表示动画还没结束，定时器要留着。
+bool box_anim_tick(App& app);
+void box_on_show(App& app);
+void box_on_hide(App& app);
+// 标题栏里、除了「收起」按钮以外的区域：用来拖动窗口
+bool box_in_caption(D2D1_SIZE_F client, D2D1_POINT_2F pt);
+
+void box_clamp(AppState& s, D2D1_SIZE_F client);
+// 把路径收进当前盒子（拖入、粘贴、文件对话框共用）
+void box_ingest(App& app, const std::vector<std::wstring>& paths);
 
 }  // namespace sg

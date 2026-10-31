@@ -9,11 +9,13 @@
 
 namespace sg {
 
-GridLayout grid_measure(float client_w, float client_h, float top) {
+GridLayout grid_measure(float client_w, float client_h, float top, float left, float right_pad) {
     GridLayout gl;
     gl.top = top;
-    const float avail_w = client_w - kPad * 2.f;
-    const float avail_h = client_h - top;
+    gl.left = left;
+    const float avail_w = client_w - left - right_pad;
+    // 底部留出 kPad：最后一行不会贴边，那条空白用来放一行很轻的提示
+    const float avail_h = client_h - top - kPad;
     gl.cols = static_cast<int>((avail_w + kGap) / (kCell + kGap));
     if (gl.cols < 1) gl.cols = 1;
     gl.rows_visible = static_cast<int>((avail_h + kGap) / (kCell + kGap));
@@ -25,14 +27,14 @@ GridLayout grid_measure(float client_w, float client_h, float top) {
 D2D1_RECT_F grid_cell_rect(const GridLayout& gl, int index, int scroll) {
     const int col = index % gl.cols;
     const int row = index / gl.cols - scroll;
-    const float x = kPad + col * (kCell + kGap);
+    const float x = gl.left + col * (kCell + kGap);
     const float y = gl.top + row * (kCell + kGap);
     return D2D1::RectF(x, y, x + kCell, y + kCell);
 }
 
 int grid_hittest(const GridLayout& gl, int count, int scroll, D2D1_POINT_2F pt) {
     if (pt.y < gl.top) return -1;
-    const float gx = pt.x - kPad;
+    const float gx = pt.x - gl.left;
     const float gy = pt.y - gl.top;
     if (gx < 0 || gy < 0) return -1;
     const int col = static_cast<int>(gx / (kCell + kGap));

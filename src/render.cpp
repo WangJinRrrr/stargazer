@@ -3,7 +3,6 @@
 #include <cstdio>
 
 #include "icons.h"
-#include "images.h"
 
 namespace sg {
 
@@ -62,7 +61,6 @@ bool Renderer::sync_dpi() {
     // 图标位图也属于旧设备，必须一起丢弃（否则会把旧设备的位图画到新设备上）
     discard_device_resources();
     icons_on_device_lost();
-    images_on_device_lost();
     return true;
 }
 
@@ -129,7 +127,9 @@ bool Renderer::begin() {
     ::GetClientRect(hwnd, &rc);
     const D2D1_SIZE_U size =
         D2D1::SizeU(static_cast<UINT32>(rc.right), static_cast<UINT32>(rc.bottom));
-    if (rt->GetPixelSize() != size) rt->Resize(size);
+    // 不用 operator!=：MinGW 的 d2d1 头没有给 D2D1_SIZE_U 配比较运算符，MSVC 的 helper 才有。
+    const D2D1_SIZE_U cur = rt->GetPixelSize();
+    if (cur.width != size.width || cur.height != size.height) rt->Resize(size);
     rt->BeginDraw();
     return true;
 }
@@ -137,11 +137,10 @@ bool Renderer::begin() {
 void Renderer::end() {
     if (!rt) return;
     const HRESULT hr = rt->EndDraw();
-    if (hr == D2DERR_RECREATE_TARGET) {
+    if (static_cast<UINT>(hr) == static_cast<UINT>(D2DERR_RECREATE_TARGET)) {
         // 设备丢失：丢弃设备相关资源，下一帧重建。图标位图由 icons 模块自理
         discard_device_resources();
         icons_on_device_lost();
-        images_on_device_lost();
     }
 }
 

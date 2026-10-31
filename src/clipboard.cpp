@@ -81,32 +81,6 @@ bool clipboard_get_text(std::wstring& out) {
     return !out.empty();
 }
 
-bool clipboard_get_image_dib(std::vector<uint8_t>& out) {
-    out.clear();
-    // 绝大多数复制位图的程序都会给 CF_DIB；CF_BITMAP（HBITMAP）不处理：
-    // HBITMAP 是设备相关位图，取像素还要过一遍 DC，得不偿失。
-    UINT fmt = 0;
-    if (::IsClipboardFormatAvailable(CF_DIBV5)) {
-        fmt = CF_DIBV5;
-    } else if (::IsClipboardFormatAvailable(CF_DIB)) {
-        fmt = CF_DIB;
-    } else {
-        return false;
-    }
-    if (!::OpenClipboard(nullptr)) return false;
-    if (HANDLE h = ::GetClipboardData(fmt)) {
-        if (const void* p = ::GlobalLock(h)) {
-            const SIZE_T n = ::GlobalSize(h);
-            if (n >= sizeof(BITMAPINFOHEADER)) {
-                out.assign(static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n);
-            }
-            ::GlobalUnlock(h);
-        }
-    }
-    ::CloseClipboard();
-    return !out.empty();
-}
-
 std::vector<std::wstring> clipboard_get_paths(bool& move) {
     move = false;
     std::vector<std::wstring> out;

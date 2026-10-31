@@ -26,16 +26,8 @@ constexpr const wchar_t* kHotkeyKeyKey = L"hotkey_key";
 constexpr UINT WM_APP_SHOW = WM_APP + 1;
 constexpr UINT WM_APP_TRAY = WM_APP + 2;
 constexpr UINT WM_APP_ICON_READY = WM_APP + 3;
-// 文件系统工作线程（线程 B）完成一批存在性校验
+// 文件系统工作线程完成一批存在性校验
 constexpr UINT WM_APP_FS_CHECKED = WM_APP + 4;
-// 目录枚举完成（浏览视图）
-constexpr UINT WM_APP_DIR_LOADED = WM_APP + 5;
-// 文件操作（改名/新建/删除/粘贴）完成
-constexpr UINT WM_APP_FS_OP_DONE = WM_APP + 6;
-// 缩略图工作线程取到一张图（待办图片预览）
-constexpr UINT WM_APP_IMAGE_READY = WM_APP + 7;
-// 被监视的目录发生了外部改动（浏览视图自动刷新）
-constexpr UINT WM_APP_DIR_CHANGED = WM_APP + 8;
 
 struct App {
     HINSTANCE inst = nullptr;
@@ -60,9 +52,16 @@ struct App {
     bool in_drag = false;
     bool running = true;
     bool mouse_tracking = false;
-    // 内部拖拽（把条目拖到分组标签上换组）。不走 OLE：自写状态机更短也更可控。
+    // 内部拖拽（拖到侧栏换盒子，或拖到另一张卡片换位置）。
+    // 超过一点距离才算拖，普通点击不会把条目挪走。
     bool internal_drag = false;
-    int drag_from = -1;  // filtered 下标
+    bool drag_pending = false;
+    POINT drag_anchor{};
+    int drag_from = -1;  // 盒子里的真实下标
+    int press = 0;       // ShellControl：按钮按下、尚未松开
+    // 呼出时内容从纸色淡入。1 = 淡入结束。
+    float reveal = 1.f;
+    unsigned long long reveal_ms = 0;
     AppState state;
 };
 
@@ -84,8 +83,7 @@ void app_toggle(App& app);
 void app_shutdown(App& app);
 // 非致命提示（托盘气泡）。视图层用它报错，不弹模态框
 void app_notify(App& app, const std::wstring& text);
-// 投递一次存在性校验：当前盒子的条目 + 待办里的引用型图片。
-// 结果按 path 一次回填 boxes 与 todos（fs_work 的回调是单槽设计，不能变成两个消费者）。
+// 投递一次存在性校验：只校验当前盒子的条目。结果按 path 回填 missing。
 void app_request_fs_checks(App& app);
 
 }  // namespace sg

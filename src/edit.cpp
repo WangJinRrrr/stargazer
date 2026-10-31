@@ -19,12 +19,20 @@ LRESULT CALLBACK edit_subclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_P
 
     switch (msg) {
         case WM_KEYDOWN:
-            // 面板层的组合键（Ctrl+Tab 切视图、收纳盒的 Ctrl+1..9 切盒子）
-            // 不该被输入框吃掉：待办的常驻输入框一进视图就抢焦点，不转发的话什么键都到不了面板。
+            // 面板层的组合键（Ctrl+Tab 切盒子、Ctrl+1..9 直接跳盒子）
+            // 不该被筛选框吃掉：筛选框开着时焦点在它上面。
+            // 筛选框自己要用 Ctrl+A/C/V/X/Z。其余带 Ctrl 的面板命令
+            // （切盒子、新建、添加文件）转给父窗口。
             if ((::GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
-                ((wp >= '1' && wp <= '9') || wp == VK_TAB)) {
-                if (e->parent) {
-                    ::PostMessageW(e->parent, WM_KEYDOWN, wp, 0);
+                (::GetKeyState(VK_MENU) & 0x8000) == 0) {
+                const bool edit_cmd = wp == 'A' || wp == 'C' || wp == 'V' || wp == 'X' || wp == 'Z';
+                const bool panel_cmd = (wp >= '1' && wp <= '9') || wp == VK_TAB || wp == 'N' ||
+                                       wp == 'O' || wp == 'F' ||
+                                       (wp == 'D' && (::GetKeyState(VK_SHIFT) & 0x8000) != 0);
+                if (!edit_cmd && panel_cmd && e->parent) {
+                    // 同步送过去：Ctrl 还按着，父窗口用 GetAsyncKeyState 才读得到。
+                    // 处理完立刻 return，不再碰可能已被关掉的输入框。
+                    ::SendMessageW(e->parent, WM_KEYDOWN, wp, 0);
                     return 0;
                 }
             }
@@ -94,9 +102,8 @@ LRESULT CALLBACK edit_subclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_P
 
 HBRUSH edit_bg_brush() {
     if (!g_bg_brush) {
-        // 与“Theme::control 叠在 Theme::bg 上”的实色一致（0x202020 + 6% 白 ≈ #2E2E2E），
-        // 否则编辑框在容器里会露出一块颜色不对的方角。
-        g_bg_brush = ::CreateSolidBrush(RGB(46, 46, 46));
+        // 与 Theme::card / control 一致的白。筛选框和改名框都落在白卡片上。
+        g_bg_brush = ::CreateSolidBrush(RGB(255, 255, 255));
     }
     return g_bg_brush;
 }
@@ -116,7 +123,7 @@ void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initi
         owned_brush = ::CreateSolidBrush(style.paint.bg);
         paint = style.paint;
         paint.brush = owned_brush;
-        if (paint.text == CLR_INVALID) paint.text = RGB(233, 233, 233);
+        if (paint.text == CLR_INVALID) paint.text = RGB(28, 25, 23);
     } else {
         paint = EditPaint();
     }
@@ -146,7 +153,7 @@ void InlineEdit::open(HWND parent_wnd, const RECT& rc, const std::wstring& initi
     }
 
     ::SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-    ::SetWindowTheme(hwnd, L"DarkMode_Explorer", nullptr);  // 深色滚动条/插入符
+    ::SetWindowTheme(hwnd, L"Explorer", nullptr);  // 浅色插入符 / 滚动条
     // 内边距：默认 10 与容器里占位文字的 +10 对齐；
     // 改名框传 0 —— 它的矩形已经就是被改的那段文字的位置
     const int pad = ::MulDiv(static_cast<int>(pad_x), static_cast<int>(dpi > 0.f ? dpi : 96.f), 96);

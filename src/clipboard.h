@@ -20,8 +20,4 @@ void clipboard_set_text(const std::wstring& text);
 // 读剪贴板里的纯文本（CF_UNICODETEXT）；没有文本返回 false
 bool clipboard_get_text(std::wstring& out);
 
-// 读剪贴板里的位图（CF_DIBV5 优先，退回 CF_DIB），拿到 DIB 原始字节（BITMAPINFOHEADER 起）；
-// 剪贴板里没有位图返回 false
-bool clipboard_get_image_dib(std::vector<uint8_t>& out);
-
 }  // namespace sg

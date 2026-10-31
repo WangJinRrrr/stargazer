@@ -28,130 +28,76 @@ D2D1_COLOR_F ext_color(const std::wstring& path) {
 }
 
 D2D1_RECT_F grid_label_rect(const D2D1_RECT_F& cell) {
-    return D2D1::RectF(cell.left + 4.f, cell.top + 8.f + 48.f + 3.f, cell.right - 4.f,
-                       cell.bottom - 4.f);
+    return D2D1::RectF(cell.left + 10.f, cell.top + 18.f + 44.f + 8.f, cell.right - 10.f,
+                       cell.bottom - 12.f);
 }
 
 void grid_render(Renderer& r, const GridLayout& gl, const std::vector<GridItem>& items,
                  int scroll) {
     IDWriteTextFormat* name_fmt =
-        r.format(14.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
+        r.format(13.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
     for (size_t i = 0; i < items.size(); ++i) {
         const int row = static_cast<int>(i) / gl.cols;
         if (row < scroll || row >= scroll + gl.rows_visible) continue;  // 只画可见行
 
         const D2D1_RECT_F rc = grid_cell_rect(gl, static_cast<int>(i), scroll);
         const bool selected = items[i].selected;
+        const float hover = items[i].hover < 0.f ? 0.f : (items[i].hover > 1.f ? 1.f : items[i].hover);
 
-        // Win11 文件格：悬停 = 极淡填充；选中 = 强调色低透明底 + 强调色描边（文字仍用 primary）
+        // 软阴影：悬停时略沉一点，平时几乎贴着纸面
+        const float drop = 3.f + hover * 3.f;
+        const D2D1_RECT_F shadow =
+            D2D1::RectF(rc.left, rc.top + drop, rc.right, rc.bottom + drop + 2.f);
+        D2D1_COLOR_F shade = r.theme.shadow;
+        shade.a *= 0.45f + hover * 0.55f;
+        r.fill_round_rect(shadow, kRadiusMd, shade);
+
+        r.fill_round_rect(rc, kRadiusMd, r.theme.card);
         if (selected) {
             r.fill_round_rect(rc, kRadiusMd, r.theme.sel_fill);
-            r.stroke_round_rect(rc, kRadiusMd, r.theme.sel_stroke, 1.f);
-        } else if (items[i].hovered) {
-            r.fill_round_rect(rc, kRadiusMd, r.theme.hover);
+            r.stroke_round_rect(rc, kRadiusMd, r.theme.sel_stroke, 1.5f);
+        } else if (hover > 0.01f) {
+            D2D1_COLOR_F wash = r.theme.hover;
+            wash.a = hover;
+            r.fill_round_rect(rc, kRadiusMd, wash);
+            D2D1_COLOR_F edge = r.theme.border_strong;
+            edge.a = hover;
+            r.stroke_round_rect(rc, kRadiusMd, edge, 1.f);
+        } else {
+            r.stroke_round_rect(rc, kRadiusMd, r.theme.border, 1.f);
         }
 
-        const float ix = rc.left + (kCell - 48.f) / 2.f;
-        const float iy = rc.top + 8.f;
-        const D2D1_RECT_F irect = D2D1::RectF(ix, iy, ix + 48.f, iy + 48.f);
+        constexpr float kIcon = 44.f;
+        const float ix = rc.left + (kCell - kIcon) / 2.f;
+        const float iy = rc.top + 18.f;
+        const D2D1_RECT_F irect = D2D1::RectF(ix, iy, ix + kIcon, iy + kIcon);
+        const float icon_a = items[i].missing ? 0.38f : 1.f;
         if (ID2D1Bitmap* bmp = icons_get(r, items[i].icon_src, items[i].is_dir)) {
-            r.rt->DrawBitmap(bmp, irect, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            r.rt->DrawBitmap(bmp, irect, icon_a, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
         } else {
-            // 图标未就绪：扩展名色块 + 首字母（骨架先出，图标后到）
-            r.fill_round_rect(irect, 6.f, ext_color(items[i].icon_src));
+            D2D1_COLOR_F tile = ext_color(items[i].icon_src);
+            tile.a = icon_a;
+            r.fill_round_rect(irect, 12.f, tile);
             const std::wstring initial =
                 items[i].label.empty() ? std::wstring(L"?") : items[i].label.substr(0, 1);
             r.text(irect, initial,
-                   r.format(20.f, DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER),
-                   D2D1::ColorF(1.f, 1.f, 1.f, 0.9f));
+                   r.format(18.f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER),
+                   D2D1::ColorF(1.f, 1.f, 1.f, icon_a));
         }
 
         const D2D1_RECT_F label = grid_label_rect(rc);
+        const D2D1_COLOR_F name_color = items[i].missing ? r.theme.text_faint : r.theme.text;
+        r.text(label, items[i].label, name_fmt, name_color);
         if (items[i].missing) {
-            // 失效项：名字灰显 + 中段一条删除线（先画正常底与图标，只动名字）
-            r.text(label, items[i].label, name_fmt, r.theme.text_faint);
-            const float mid = (label.top + label.bottom) / 2.f;
-            r.fill_rect(D2D1::RectF(label.left, mid - 0.5f, label.right, mid + 0.5f),
+            const D2D1_SIZE_F tw = r.measure_text(items[i].label, name_fmt);
+            const float max_w = label.right - label.left;
+            const float w = tw.width > 0.f ? std::min(tw.width, max_w) : max_w * 0.6f;
+            const float cx = (label.left + label.right) / 2.f;
+            const float mid = label.top + 9.f;
+            r.fill_rect(D2D1::RectF(cx - w / 2.f, mid - 0.5f, cx + w / 2.f, mid + 0.5f),
                         r.theme.text_faint);
-        } else {
-            r.text(label, items[i].label, name_fmt,
-                   selected ? r.theme.text : r.theme.text_dim);
         }
     }
-}
-
-D2D1_RECT_F view_tabs_rect(D2D1_SIZE_F client) {
-    return D2D1::RectF(kPad, 0.f, client.width - kPad, kViewTabsH);
-}
-
-// 标签宽度 = 文字宽 + 两侧内边距 + 标签间距。只和 DPI/字体有关，
-// 而 WM_NCHITTEST 每动一下鼠标都会问一次，所以量一次就缓存住。
-D2D1_RECT_F view_tab_rect(Renderer& r, int i) {
-    static float cached_dpi = 0.f;
-    static D2D1_RECT_F cached[kViewCount] = {};
-    if (cached_dpi != r.dpi) {
-        IDWriteTextFormat* fmt = r.format(14.f);
-        float x = kPad;
-        for (int k = 0; k < kViewCount; ++k) {
-            const float tw = r.measure_text(view_name(k), fmt).width;
-            const float w = std::max(56.f, tw + 28.f);
-            cached[k] = D2D1::RectF(x, 0.f, x + w, kViewTabsH);
-            x += w + 4.f;
-        }
-        cached_dpi = r.dpi;
-    }
-    if (i < 0 || i >= kViewCount) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
-    return cached[i];
-}
-
-int view_tab_hittest(Renderer& r, D2D1_POINT_2F pt) {
-    if (pt.y < 0.f || pt.y > kViewTabsH) return -1;
-    for (int i = 0; i < kViewCount; ++i) {
-        const D2D1_RECT_F tab = view_tab_rect(r, i);
-        if (pt.x >= tab.left && pt.x <= tab.right) return i;
-    }
-    return -1;
-}
-
-const wchar_t* view_name(int v) {
-    switch (v) {
-        case 0:
-            return L"收纳盒";
-        case 1:
-            return L"待办";
-        case 2:
-            return L"浏览";
-        default:
-            return L"";
-    }
-}
-
-void view_tabs_render(Renderer& r, D2D1_SIZE_F client, int active, int hover) {
-    IDWriteTextFormat* fmt =
-        r.format(14.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
-    for (int i = 0; i < kViewCount; ++i) {
-        const D2D1_RECT_F tab = view_tab_rect(r, i);
-        if (tab.right <= tab.left) continue;
-        const std::wstring name = view_name(i);
-        if (i == active) {
-            // 选中：primary 文字 + 底部 3px 圆头强调条（Win11 NavigationView 的做法）
-            r.text(tab, name, fmt, r.theme.text);
-            const float tw = r.measure_text(name, fmt).width;
-            const float cx = (tab.left + tab.right) / 2.f;
-            const float half = std::min((tab.right - tab.left) / 2.f - 8.f, tw / 2.f + 6.f);
-            r.fill_round_rect(
-                D2D1::RectF(cx - half, kViewTabsH - 5.f, cx + half, kViewTabsH - 2.f), 1.5f,
-                r.theme.accent);
-        } else {
-            if (i == hover) {
-                r.fill_round_rect(D2D1::RectF(tab.left, 6.f, tab.right, kViewTabsH - 6.f),
-                                  kRadiusSm, r.theme.hover);
-            }
-            r.text(tab, name, fmt, r.theme.text_dim);
-        }
-    }
-    // 标签行下沿的分隔线（标签条之外的整行都不画，它是拖动区）
-    r.fill_rect(D2D1::RectF(0.f, kViewTabsH - 1.f, client.width, kViewTabsH), r.theme.divider);
 }
 
 }  // namespace sg
