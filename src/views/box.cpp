@@ -46,7 +46,8 @@ bool current_has_missing(const AppState& s) {
 
 ShellLayout box_shell(const App& app) {
     const D2D1_SIZE_F cs = app.render.client_logical();
-    return shell_measure(cs.width, cs.height, current_has_missing(app.state));
+    return shell_measure(cs.width, cs.height, current_has_missing(app.state),
+                         app.state.box_view.side_w);
 }
 
 const Box* current_box(const AppState& s) {
@@ -353,7 +354,8 @@ void begin_external_drag(App& app) {
 
 void box_clamp(AppState& s, D2D1_SIZE_F client) {
     BoxState& b = s.box_view;
-    const ShellLayout sh = shell_measure(client.width, client.height, current_has_missing(s));
+    const ShellLayout sh =
+        shell_measure(client.width, client.height, current_has_missing(s), b.side_w);
     if (s.boxes.empty()) {
         b.box = 0;
         b.sel = -1;
@@ -676,14 +678,24 @@ void box_render(App& app) {
 
     r.fill_rect(D2D1::RectF(0.f, 0.f, cs.width, cs.height), r.theme.bg);
     r.fill_rect(sh.sidebar, r.theme.panel);
-    r.fill_rect(D2D1::RectF(kSidebarW, kTitleH, kSidebarW + 1.f, cs.height), r.theme.divider);
+    const float split_x = sh.sidebar.right;
+    const bool split_on = b.split_hot || app.side_resizing;
+    r.fill_rect(D2D1::RectF(split_x - 0.5f, kTitleH, split_x + 0.5f, cs.height),
+                split_on ? r.theme.accent : r.theme.divider);
+    // 短握把：分隔条平时也能被看见，悬停时跟着强调色变
+    const float grip_y = (kTitleH + cs.height) * 0.5f;
+    r.fill_round_rect(D2D1::RectF(split_x - 2.f, grip_y - 16.f, split_x + 2.f, grip_y + 16.f), 2.f,
+                      split_on ? r.theme.accent : r.theme.stroke_strong);
 
-    r.text(D2D1::RectF(kSidePad, 0.f, 160.f, kTitleH), L"Stargazer",
+    r.text(D2D1::RectF(kSidePad, 0.f, 108.f, kTitleH), L"Stargazer",
            r.format(16.f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING),
            r.theme.text);
-    r.text(D2D1::RectF(118.f, 0.f, kSidebarW - 8.f, kTitleH), L"文件盒子",
-           r.format(13.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING),
-           r.theme.text_faint);
+    // 副标题跟在名字后面，侧栏很窄时不画，避免被分隔条切成半个字
+    if (sh.sidebar.right > 196.f) {
+        r.text(D2D1::RectF(112.f, 0.f, sh.sidebar.right - 16.f, kTitleH), L"文件盒子",
+               r.format(13.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING),
+               r.theme.text_faint);
+    }
     paint_button(r, sh.dismiss, L"收起", false, hot_ctrl(app, ShellControl::Dismiss),
                  down_ctrl(app, ShellControl::Dismiss));
 
@@ -937,6 +949,18 @@ void box_mouse_move(App& app, POINT phys) {
     const D2D1_SIZE_F cs = app.render.client_logical();
     AppState& s = app.state;
     const ShellLayout sh = box_shell(app);
+
+    if (app.side_resizing) {
+        ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEWE));
+        const float next = shell_side_width(app.side_anchor_w + (lpt.x - app.side_anchor_x), cs.width);
+        if (next != s.box_view.side_w) {
+            s.box_view.side_w = next;
+            place_edits(app);
+            invalidate(app);
+        }
+        return;
+    }
+
     track_mouse(app);
 
     if (app.drag_pending && !app.internal_drag) {
@@ -969,11 +993,17 @@ void box_mouse_move(App& app, POINT phys) {
         return;
     }
 
-    const int chrome = static_cast<int>(shell_control_at(sh, lpt));
-    const int row =
-        shell_row_hittest(sh, static_cast<int>(s.boxes.size()), s.box_view.side_scroll, lpt);
-    const int cell = (row < 0 && chrome == 0) ? box_hittest(app, lpt) : -1;
+    const bool split = shell_splitter_hit(sh, lpt);
+    const int chrome = split ? 0 : static_cast<int>(shell_control_at(sh, lpt));
+    const int row = split ? -1
+                          : shell_row_hittest(sh, static_cast<int>(s.boxes.size()),
+                                              s.box_view.side_scroll, lpt);
+    const int cell = (row < 0 && chrome == 0 && !split) ? box_hittest(app, lpt) : -1;
     bool changed = false;
+    if (split != s.box_view.split_hot) {
+        s.box_view.split_hot = split;
+        changed = true;
+    }
     if (chrome != s.box_view.chrome_hover) {
         s.box_view.chrome_hover = chrome;
         changed = true;
@@ -991,12 +1021,14 @@ void box_mouse_move(App& app, POINT phys) {
 
 void box_mouse_leave(App& app) {
     app.mouse_tracking = false;
+    if (app.side_resizing) return;  // 分隔条拖出窗口也要继续跟着鼠标
     if (app.internal_drag) {
         begin_external_drag(app);
         return;
     }
     app.drag_pending = false;
     app.state.box_view.chrome_hover = 0;
+    app.state.box_view.split_hot = false;
     app.state.box_view.side_hover = -1;
     set_item_hover(app, -1);
     invalidate(app);
@@ -1006,6 +1038,16 @@ void box_lbutton_down(App& app, POINT phys) {
     const D2D1_POINT_2F lpt = app.render.to_logical(phys);
     AppState& s = app.state;
     const ShellLayout sh = box_shell(app);
+    if (shell_splitter_hit(sh, lpt)) {
+        app.side_resizing = true;
+        app.side_anchor_x = lpt.x;
+        app.side_anchor_w = sh.sidebar.right;
+        if (app.panel) {
+            ::SetCapture(app.panel);
+            ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEWE));
+        }
+        return;
+    }
     const ShellControl ctrl = shell_control_at(sh, lpt);
 
     if (ctrl == ShellControl::Search) {
@@ -1050,6 +1092,13 @@ void box_lbutton_down(App& app, POINT phys) {
 
 void box_lbutton_up(App& app, POINT phys) {
     const D2D1_POINT_2F lpt = app.render.to_logical(phys);
+    if (app.side_resizing) {
+        app.side_resizing = false;
+        if (app.panel) ::ReleaseCapture();
+        app_save_ui(app);
+        invalidate(app);
+        return;
+    }
     if (app.press != 0) {
         const int fired = app.press;
         app.press = 0;
@@ -1107,6 +1156,13 @@ void box_lbutton_up(App& app, POINT phys) {
 void box_lbutton_dblclk(App& app, POINT phys) {
     const D2D1_POINT_2F lpt = app.render.to_logical(phys);
     const ShellLayout sh = box_shell(app);
+    if (shell_splitter_hit(sh, lpt)) {
+        app.state.box_view.side_w = kSidebarW;
+        app.side_resizing = false;
+        app_save_ui(app);
+        invalidate(app);
+        return;
+    }
     const int row = shell_row_hittest(sh, static_cast<int>(app.state.boxes.size()),
                                       app.state.box_view.side_scroll, lpt);
     if (row >= 0) {
@@ -1125,7 +1181,7 @@ void box_mouse_wheel(App& app, int step, POINT screen) {
     if (app.panel) ::ScreenToClient(app.panel, &client);
     const D2D1_POINT_2F lpt = app.render.to_logical(client);
     AppState& s = app.state;
-    if (lpt.x < kSidebarW) {
+    if (lpt.x < box_shell(app).sidebar.right) {
         s.box_view.side_scroll += step;
     } else {
         s.box_view.scroll += step;
@@ -1235,7 +1291,20 @@ void box_on_hide(App& app) {
     app.drag_pending = false;
     app.drag_from = -1;
     app.press = 0;
+    if (app.side_resizing) {
+        app.side_resizing = false;
+        app_save_ui(app);
+    }
     if (app.panel) ::ReleaseCapture();
+}
+
+bool box_size_cursor(App& app) {
+    if (app.side_resizing) return true;
+    if (!app.panel) return false;
+    POINT pt{};
+    if (!::GetCursorPos(&pt)) return false;
+    ::ScreenToClient(app.panel, &pt);
+    return shell_splitter_hit(box_shell(app), app.render.to_logical(pt));
 }
 
 bool box_in_caption(D2D1_SIZE_F client, D2D1_POINT_2F pt) {

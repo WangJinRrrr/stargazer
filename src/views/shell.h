@@ -9,7 +9,10 @@ namespace sg {
 // 窗口骨架（96 DPI 逻辑像素）。侧栏放盒子，右侧是当前盒子的内容。
 // 命中与绘制共用这些矩形，避免“点得到的按钮画在别处”。
 constexpr float kTitleH = 56.f;
-constexpr float kSidebarW = 236.f;
+constexpr float kSidebarW = 236.f;     // 默认侧栏宽
+constexpr float kSidebarMin = 168.f;   // 再窄名字就挤没了
+constexpr float kSidebarMax = 560.f;   // 再宽内容区就不成比例
+constexpr float kSplitterHit = 5.f;    // 分隔条热区，向两边各伸出这么多
 constexpr float kSidePad = 14.f;
 constexpr float kSideRowH = 44.f;
 constexpr float kSideRowGap = 6.f;
@@ -31,6 +34,7 @@ struct ShellLayout {
     D2D1_RECT_F title{};
     D2D1_RECT_F dismiss{};
     D2D1_RECT_F sidebar{};
+    D2D1_RECT_F splitter{};  // 侧栏右缘的拖动热区（命中与高亮共用）
     D2D1_RECT_F side_label{};
     D2D1_RECT_F rows{};      // 盒子列表的可视区域
     D2D1_RECT_F new_box{};
@@ -46,8 +50,14 @@ struct ShellLayout {
     bool show_banner = false;
 };
 
+// sidebar_w <= 0 用默认宽度。结果会夹在最小/最大之间，并给右侧至少留一列卡片。
+float shell_side_width(float requested, float client_w);
+
 // show_banner：当前盒子有失效项时，搜索框下面多一行提示。
-ShellLayout shell_measure(float client_w, float client_h, bool show_banner);
+ShellLayout shell_measure(float client_w, float client_h, bool show_banner,
+                          float sidebar_w = kSidebarW);
+
+bool shell_splitter_hit(const ShellLayout& sh, D2D1_POINT_2F pt);
 
 D2D1_RECT_F shell_row_rect(const ShellLayout& sh, int index, int scroll);
 int shell_row_hittest(const ShellLayout& sh, int count, int scroll, D2D1_POINT_2F pt);

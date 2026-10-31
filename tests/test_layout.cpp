@@ -133,6 +133,31 @@ static void test_shell_chrome_hit_targets() {
           ShellControl::Clean);
 }
 
+static void test_sidebar_width_clamps_and_moves_content() {
+    const ShellLayout wide = shell_measure(1400.f, 800.f, false, 420.f);
+    CHECK(wide.sidebar.right == 420.f);
+    CHECK(wide.grid_area.left == 420.f + kPad);
+    CHECK(shell_splitter_hit(wide, D2D1::Point2F(420.f, 200.f)));
+    CHECK(!shell_splitter_hit(wide, D2D1::Point2F(420.f, 10.f)));  // 标题栏不是分隔条
+    CHECK(!shell_splitter_hit(wide, D2D1::Point2F(390.f, 200.f)));
+
+    // 窄窗口里侧栏让出一列卡片，不会按请求的 500 画出去
+    const float content_min = kPad + kCell + kPad;
+    const ShellLayout cramped = shell_measure(700.f, 500.f, false, 500.f);
+    CHECK(cramped.sidebar.right <= 700.f - content_min + 0.5f);
+    CHECK(cramped.sidebar.right >= kSidebarMin);
+    CHECK(cramped.grid_area.left == cramped.sidebar.right + kPad);
+
+    // 0 = 默认宽度
+    const ShellLayout def = shell_measure(1080.f, 720.f, false, 0.f);
+    CHECK(def.sidebar.right == kSidebarW);
+
+    // 双击复位用的默认值必须落在允许范围内
+    CHECK(shell_side_width(kSidebarW, 1080.f) == kSidebarW);
+    CHECK(shell_side_width(40.f, 1080.f) == kSidebarMin);
+    CHECK(shell_side_width(900.f, 1400.f) == kSidebarMax);
+}
+
 static void test_sidebar_rows_skip_gaps() {
     const ShellLayout sh = shell_measure(1080.f, 720.f, false);
     CHECK(sh.rows_visible >= 1);
@@ -167,6 +192,7 @@ int main() {
     test_grid_respects_left_inset();
     test_keydown_navigation();
     test_shell_chrome_hit_targets();
+    test_sidebar_width_clamps_and_moves_content();
     test_sidebar_rows_skip_gaps();
     if (g_failed == 0) {
         std::printf("OK: test_layout 全部通过\n");

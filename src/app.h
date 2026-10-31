@@ -59,6 +59,10 @@ struct App {
     POINT drag_anchor{};
     int drag_from = -1;  // 盒子里的真实下标
     int press = 0;       // ShellControl：按钮按下、尚未松开
+    // 拖侧栏右缘改宽度。锚点是按下时的逻辑坐标和当时的侧栏宽。
+    bool side_resizing = false;
+    float side_anchor_x = 0.f;
+    float side_anchor_w = 0.f;
     // 呼出时内容从纸色淡入。1 = 淡入结束。
     float reveal = 1.f;
     unsigned long long reveal_ms = 0;

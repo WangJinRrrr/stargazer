@@ -33,6 +33,8 @@ void box_on_show(App& app);
 void box_on_hide(App& app);
 // 标题栏里、除了「收起」按钮以外的区域：用来拖动窗口
 bool box_in_caption(D2D1_SIZE_F client, D2D1_POINT_2F pt);
+// 鼠标在侧栏分隔条上，或正在拖它：光标换成左右箭头
+bool box_size_cursor(App& app);
 
 void box_clamp(AppState& s, D2D1_SIZE_F client);
 // 把路径收进当前盒子（拖入、粘贴、文件对话框共用）

@@ -22,6 +22,8 @@ struct BoxState {
     unsigned long long hover_ms = 0;
     int side_hover = -1;     // 侧栏里悬停的盒子
     int chrome_hover = 0;    // ShellControl：按钮/搜索框的悬停
+    bool split_hot = false;  // 鼠标在侧栏分隔条上
+    float side_w = 0.f;      // 侧栏宽（逻辑像素）。0 = 用默认宽度
     int side_scroll = 0;
     int scroll = 0;          // 网格起始行
     int drag_over_box = -1;  // 内部拖拽时高亮的目标盒子

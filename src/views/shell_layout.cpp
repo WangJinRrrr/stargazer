@@ -15,10 +15,22 @@ bool shell_contains(const D2D1_RECT_F& r, D2D1_POINT_2F pt) {
     return pt.x >= r.left && pt.x <= r.right && pt.y >= r.top && pt.y <= r.bottom;
 }
 
-ShellLayout shell_measure(float client_w, float client_h, bool show_banner) {
+float shell_side_width(float requested, float client_w) {
+    const float want = requested <= 0.f ? kSidebarW : requested;
+    // 右侧至少留一列卡片，侧栏不能把内容挤没。
+    const float content_min = kPad + kCell + kPad;
+    float hi = client_w - content_min;
+    if (hi < kSidebarMin) hi = std::max(120.f, client_w * 0.46f);
+    hi = std::min(kSidebarMax, hi);
+    const float lo = std::min(kSidebarMin, hi);
+    return std::clamp(want, lo, std::max(lo, hi));
+}
+
+ShellLayout shell_measure(float client_w, float client_h, bool show_banner, float sidebar_w) {
     ShellLayout sh;
     sh.show_banner = show_banner;
-    const float w = std::max(client_w, kSidebarW + 160.f);
+    const float side = shell_side_width(sidebar_w, client_w);
+    const float w = std::max(client_w, side + 160.f);
     const float h = std::max(client_h, kTitleH + 160.f);
 
     sh.title = rect(0.f, 0.f, w, kTitleH);
@@ -27,21 +39,24 @@ ShellLayout shell_measure(float client_w, float client_h, bool show_banner) {
     sh.dismiss = rect(w - kPad - btn_w, (kTitleH - btn_h) / 2.f, w - kPad,
                       (kTitleH - btn_h) / 2.f + btn_h);
 
-    sh.sidebar = rect(0.f, kTitleH, kSidebarW, h);
-    sh.side_label = rect(kSidePad, kTitleH + 18.f, kSidebarW - kSidePad, kTitleH + 36.f);
-    sh.new_box = rect(kSidePad, h - 16.f - 40.f, kSidebarW - kSidePad, h - 16.f);
-    sh.rows = rect(kSidePad, kTitleH + 48.f, kSidebarW - kSidePad, sh.new_box.top - 12.f);
+    sh.sidebar = rect(0.f, kTitleH, side, h);
+    sh.splitter = rect(side - kSplitterHit, kTitleH, side + kSplitterHit, h);
+    sh.side_label = rect(kSidePad, kTitleH + 18.f, side - kSidePad, kTitleH + 36.f);
+    sh.new_box = rect(kSidePad, h - 16.f - 40.f, side - kSidePad, h - 16.f);
+    sh.rows = rect(kSidePad, kTitleH + 48.f, side - kSidePad, sh.new_box.top - 12.f);
 
     const float stride = sh.row_h + sh.row_gap;
     const float rows_h = sh.rows.bottom - sh.rows.top;
     sh.rows_visible = static_cast<int>((rows_h + sh.row_gap) / stride);
     if (sh.rows_visible < 1) sh.rows_visible = 1;
 
-    const float content_l = kSidebarW + kPad;
+    const float content_l = side + kPad;
     const float content_r = w - kPad;
     const float add_w = 116.f;
     sh.add = rect(content_r - add_w, kTitleH + 22.f, content_r, kTitleH + 22.f + kBtnH);
-    sh.heading = rect(content_l, kTitleH + 18.f, sh.add.left - 16.f, kTitleH + 22.f + kBtnH);
+    const float heading_r = sh.add.left - 16.f;
+    sh.heading = rect(content_l, kTitleH + 18.f, std::max(content_l, heading_r),
+                      kTitleH + 22.f + kBtnH);
     sh.search = rect(content_l, sh.add.bottom + 16.f, content_r, sh.add.bottom + 16.f + kSearchH);
 
     float grid_top = sh.search.bottom + 20.f;
@@ -77,6 +92,10 @@ int shell_row_hittest(const ShellLayout& sh, int count, int scroll, D2D1_POINT_2
 
 int shell_clamp_scroll(const ShellLayout& sh, int count, int scroll) {
     return std::clamp(scroll, 0, std::max(0, count - sh.rows_visible));
+}
+
+bool shell_splitter_hit(const ShellLayout& sh, D2D1_POINT_2F pt) {
+    return shell_contains(sh.splitter, pt);
 }
 
 ShellControl shell_control_at(const ShellLayout& sh, D2D1_POINT_2F pt) {

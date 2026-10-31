@@ -489,7 +489,7 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RECT rc{};
             ::GetWindowRect(hwnd, &rc);
             const int dpi = static_cast<int>(::GetDpiForWindow(hwnd));
-            const int m = ::MulDiv(6, dpi, 96);
+            const int m = ::MulDiv(10, dpi, 96);  // 缩放热区加宽，边才抓得住
             const bool left = pt.x < rc.left + m;
             const bool right = pt.x >= rc.right - m;
             const bool top = pt.y < rc.top + m;
@@ -515,10 +515,22 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_GETMINMAXINFO: {
             auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
             const int dpi = static_cast<int>(::GetDpiForWindow(hwnd));
-            mmi->ptMinTrackSize.x = ::MulDiv(880, dpi, 96);
-            mmi->ptMinTrackSize.y = ::MulDiv(560, dpi, 96);
+            // 下限放低，面板可以收成一小块；上限放到虚拟桌面的两倍，
+            // 不再被单块显示器的工作区截断。
+            mmi->ptMinTrackSize.x = ::MulDiv(600, dpi, 96);
+            mmi->ptMinTrackSize.y = ::MulDiv(400, dpi, 96);
+            const int vx = std::max(::GetSystemMetrics(SM_CXVIRTUALSCREEN), 1920);
+            const int vy = std::max(::GetSystemMetrics(SM_CYVIRTUALSCREEN), 1080);
+            mmi->ptMaxTrackSize.x = std::max(vx * 2, ::MulDiv(4096, dpi, 96));
+            mmi->ptMaxTrackSize.y = std::max(vy * 2, ::MulDiv(2400, dpi, 96));
             return 0;
         }
+        case WM_SETCURSOR:
+            if (app && LOWORD(lp) == HTCLIENT && box_size_cursor(*app)) {
+                ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEWE));
+                return TRUE;
+            }
+            break;
         case WM_MOUSEWHEEL: {
             if (!app) return 0;
             const int step = GET_WHEEL_DELTA_WPARAM(wp) > 0 ? -1 : 1;
@@ -597,6 +609,11 @@ LRESULT CALLBACK panel_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             box_lbutton_dblclk(*app, POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
             return 0;
         case WM_CAPTURECHANGED:
+            if (app && app->side_resizing) {
+                app->side_resizing = false;
+                app_save_ui(*app);
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+            }
             if (app && (app->internal_drag || app->drag_pending || app->press != 0)) {
                 app->internal_drag = false;
                 app->drag_pending = false;
@@ -691,6 +708,8 @@ void app_load(App& app) {
             s.ui_x = _wtoi(px.c_str());
             s.ui_y = _wtoi(py.c_str());
         }
+        const std::wstring side = config_get(ui, L"side", L"");
+        if (!side.empty()) s.box_view.side_w = static_cast<float>(_wtoi(side.c_str()));
         // 上次的盒子按名字找回。旧的 ui.txt 里可能还有 view= 字段，这里直接忽略。
         const std::wstring bn = config_get(ui, L"box", L"");
         if (!bn.empty()) {
@@ -817,6 +836,10 @@ void app_save_ui(App& app) {
     config_set(ui, L"y", std::to_wstring(rc.top));
     app.state.ui_x = rc.left;
     app.state.ui_y = rc.top;
+    if (app.state.box_view.side_w > 0.f) {
+        config_set(ui, L"side",
+                   std::to_wstring(static_cast<int>(app.state.box_view.side_w + 0.5f)));
+    }
     if (!app.state.boxes.empty()) {
         const int bi =
             std::clamp(app.state.box_view.box, 0, static_cast<int>(app.state.boxes.size()) - 1);
